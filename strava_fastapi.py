@@ -6,6 +6,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for FastAPI
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import io
 import base64
 import os
@@ -84,6 +85,23 @@ def save_and_get_activities(all_activities):
     conn.close()
     return df
 
+def get_recent_activities_by_type(df, activity_type, limit=10):
+    type_df = df[df['type'] == activity_type].copy()
+    if type_df.empty:
+        return pd.DataFrame()
+    type_df = type_df.sort_values('start_date', ascending=False).head(limit)
+    return type_df
+
+def get_activity_stats(df):
+    stats = {
+        'total_activities': len(df),
+        'total_distance_km': df['distance_km'].sum(),
+        'walk_count': len(df[df['type'] == 'Walk']),
+        'hike_count': len(df[df['type'] == 'Hike']),
+        'run_count': len(df[df['type'] == 'Run'])
+    }
+    return stats
+
 @app.on_event('startup')
 def startup_event():
     init_db()
@@ -129,50 +147,85 @@ def index(request: Request):
         <pre>Sample activities: {activities[:2] if activities else 'None'}</pre>
         """
         return HTMLResponse(debug_html)
+    
+    # Process data
     df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
     df['start_date'] = pd.to_datetime(df['start_date'])
     df['distance_km'] = df['distance'] / 1000
     df['month'] = df['start_date'].dt.to_period('M').dt.to_timestamp()
+    
+    # Get statistics
+    stats = get_activity_stats(df)
+    
+    # Get recent activities by type
+    recent_walks = get_recent_activities_by_type(df, 'Walk')
+    recent_hikes = get_recent_activities_by_type(df, 'Hike')
+    recent_runs = get_recent_activities_by_type(df, 'Run')
+    
+    # Create monthly grouping for charts
     grouped = df.groupby(['month', 'type'])['distance_km'].sum().unstack(fill_value=0)
-    # Plot combined stacked bar (already done above)
+    
+    # Generate combined chart
     plt.figure(figsize=(12,6))
-    grouped.plot(kind='bar', stacked=True, ax=plt.gca())
+    ax = grouped.plot(kind='bar', stacked=True, ax=plt.gca())
     plt.title('Monthly Distances Walked, Hiked, and Ran')
     plt.xlabel('Month')
     plt.ylabel('Distance (km)')
+    
+    # Format x-axis labels to show month/year (e.g., "Jan 2024")
+    labels = [date.strftime('%b %Y') for date in grouped.index]
+    ax.set_xticklabels(labels, rotation=45)
+    
     plt.tight_layout()
     buf = io.BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
     plt.close()
     buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    combined_chart = base64.b64encode(buf.read()).decode('utf-8')
 
-    # Additional graphs for each activity type
-    activity_imgs = {}
+    # Generate individual charts
+    activity_charts = {}
+    colors = {'Walk': '#4CAF50', 'Hike': '#FF9800', 'Run': '#2196F3'}
+    
     for activity in ['Walk', 'Hike', 'Run']:
-        if activity in grouped.columns:
+        if activity in grouped.columns and not grouped[activity].empty:
             plt.figure(figsize=(10,5))
-            grouped[activity].plot(kind='bar', color='skyblue', ax=plt.gca())
+            ax = grouped[activity].plot(kind='bar', color=colors[activity], ax=plt.gca())
             plt.title(f'Monthly Distance: {activity}')
             plt.xlabel('Month')
             plt.ylabel('Distance (km)')
+            
+            # Format x-axis labels to show month/year (e.g., "Jan 2024")
+            labels = [date.strftime('%b %Y') for date in grouped.index]
+            ax.set_xticklabels(labels, rotation=45)
+            
             plt.tight_layout()
             buf2 = io.BytesIO()
-            plt.savefig(buf2, format='png')
+            plt.savefig(buf2, format='png', dpi=150, bbox_inches='tight')
             plt.close()
             buf2.seek(0)
-            activity_imgs[activity] = base64.b64encode(buf2.read()).decode('utf-8')
+            activity_charts[activity] = base64.b64encode(buf2.read()).decode('utf-8')
 
-    html = f"""
-    <h1>Strava Monthly Distances Walked, Hiked, and Ran</h1>
-    <img src='data:image/png;base64,{img_base64}'/>
-    <h2>Walks</h2>
-    {f"<img src='data:image/png;base64,{activity_imgs['Walk']}'/>" if 'Walk' in activity_imgs else '<p>No walk data.</p>'}
-    <h2>Hikes</h2>
-    {f"<img src='data:image/png;base64,{activity_imgs['Hike']}'/>" if 'Hike' in activity_imgs else '<p>No hike data.</p>'}
-    <h2>Runs</h2>
-    {f"<img src='data:image/png;base64,{activity_imgs['Run']}'/>" if 'Run' in activity_imgs else '<p>No run data.</p>'}
-    """
-    return HTMLResponse(content=html)
+    # Prepare template context
+    def format_activities_for_template(activities_df):
+        if activities_df.empty:
+            return None
+        activities = activities_df.copy()
+        activities['start_date_str'] = activities['start_date'].dt.strftime('%Y-%m-%d')
+        return activities.to_dict('records')
+    
+    context = {
+        "request": request,
+        "combined_chart": combined_chart,
+        "walk_chart": activity_charts.get('Walk'),
+        "hike_chart": activity_charts.get('Hike'),
+        "run_chart": activity_charts.get('Run'),
+        "recent_walks": format_activities_for_template(recent_walks),
+        "recent_hikes": format_activities_for_template(recent_hikes),
+        "recent_runs": format_activities_for_template(recent_runs),
+        **stats
+    }
+    
+    return templates.TemplateResponse("dashboard.html", context)
 
 # To run: uvicorn strava_fastapi:app --reload

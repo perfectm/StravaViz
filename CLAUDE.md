@@ -8,86 +8,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 #### Using Shell Scripts (Recommended)
 ```bash
-./start.sh    # Start the server in background
+./start.sh    # Start server in background on port 8001
 ./stop.sh     # Stop the server
 ./restart.sh  # Restart the server
 ./status.sh   # Check server status
 ```
 
+Server management files:
+- `server.pid`: Tracks running process
+- `server.log`: Server output and errors
+
 #### Manual Start
 ```bash
-uvicorn strava_fastapi:app --reload --port 8001
-```
-The application serves on `http://localhost:8001` by default.
-
-#### Server Management
-- **PID file**: `server.pid` (tracks running process)
-- **Log file**: `server.log` (server output and errors)
-- **Port**: 8001 (configurable in scripts)
-
-### Installing Dependencies
-```bash
 pip install -r requirements.txt
+uvicorn strava_fastapi:app --reload --port 8001
 ```
 
 ### Environment Setup
 1. Copy `.env.example` to `.env`
-2. Configure Strava API credentials:
-   - `STRAVA_CLIENT_ID`: Get from https://developers.strava.com/
-   - `STRAVA_CLIENT_SECRET`: Get from https://developers.strava.com/
-   - `STRAVA_REFRESH_TOKEN`: Obtain through Strava OAuth flow
+2. Configure Strava API credentials from https://developers.strava.com/:
+   - `STRAVA_CLIENT_ID`
+   - `STRAVA_CLIENT_SECRET`
+   - `STRAVA_REFRESH_TOKEN` (obtain through Strava OAuth flow)
 
 ## Architecture Overview
 
-This is a single-file FastAPI application (`strava_fastapi.py`) that:
-
-### Core Components
-- **FastAPI Application**: Single endpoint serving HTML dashboard via Jinja2 templates
-- **Strava API Integration**: OAuth token refresh and activity fetching with pagination
-- **SQLite Database**: Local storage in `strava_activities.db` for incremental data updates
-- **Data Visualization**: Matplotlib charts with improved formatting, rendered as base64-encoded PNG images
+**Single-file FastAPI application** (`strava_fastapi.py`) with:
+- **Web Interface**: Jinja2 template (`templates/dashboard.html`) served at single `GET /` endpoint
+- **Strava Integration**: OAuth token refresh → paginated activity fetching → filters for Walk/Hike/Run only
+- **SQLite Storage**: `strava_activities.db` with duplicate prevention via unique `activity_id` column
+- **Visualization**: Matplotlib charts (combined stacked + individual per type) → base64 PNG → embedded in HTML
 
 ### Data Flow
-1. Application fetches new Strava activities since last update
-2. Activities are filtered for Walk/Hike/Run types only
-3. Data is stored in SQLite with duplicate prevention
-4. Monthly aggregations are calculated using pandas
-5. Charts are generated in-memory and embedded as base64 images in HTML
+1. On page load, refresh OAuth token via `get_access_token()`
+2. Query database for latest activity date
+3. Fetch only new activities from Strava API via pagination (strava_fastapi.py:119-133)
+4. Insert new activities into SQLite, skipping duplicates (strava_fastapi.py:73-86)
+5. Load all activities into pandas DataFrame, filter to Walk/Hike/Run types
+6. Group by month and type, generate charts with color coding (Walk=green, Hike=orange, Run=blue)
+7. Render dashboard template with base64-encoded charts and recent activity lists
 
-### Key Functions
-- `get_access_token()`: Refreshes Strava OAuth token
-- `get_activities()`: Fetches activities from Strava API with pagination
-- `save_and_get_activities()`: Handles database operations and returns DataFrame
-- `init_db()`: Creates SQLite schema on startup
-- `get_recent_activities_by_type()`: Returns recent activities for a specific type (Walk/Hike/Run)
-- `get_activity_stats()`: Calculates summary statistics (total activities, distances, counts by type)
-- `format_activities_for_template()`: Prepares activity data for Jinja2 template rendering
+### Critical Implementation Details
+- **Incremental Updates**: Database query for `MAX(start_date)` prevents re-downloading historical data
+- **Activity Filtering**: Only Walk, Hike, Run types are processed (strava_fastapi.py:152)
+- **Date Formatting**: Month labels show "Jan 2024" format using strftime (strava_fastapi.py:176, 199)
+- **Non-interactive Backend**: Uses `matplotlib.use('Agg')` for server-side rendering without display
 
 ### Database Schema
 Table `activities`:
-- `activity_id`: Unique Strava activity ID (prevents duplicates)
-- `name`: Activity name
-- `type`: Activity type (Walk, Hike, Run)
-- `start_date`: ISO datetime string
-- `distance`: Distance in meters
-
-### Chart Features
-- **Combined Stacked Bar Chart**: Shows monthly distances for all activity types in one view
-- **Individual Activity Charts**: Separate charts for Walk, Hike, and Run activities
-- **Improved Date Formatting**: Month labels display as "Jan 2024" format for better readability
-- **Color Coding**: Walk (green), Hike (orange), Run (blue)
-- **High DPI Output**: Charts rendered at 150 DPI for crisp display
-
-### Template System
-The application uses Jinja2 templates located in the `templates/` directory:
-- `dashboard.html`: Main dashboard template with charts and activity listings
-- Template context includes: charts (base64), recent activities, and summary statistics
-
-### Data Processing
-The application automatically handles incremental updates by checking the latest activity date in the database and only fetching newer activities from the Strava API.
-
-### Recent Updates
-- Enhanced chart formatting with proper month/year labels
-- Added template-based HTML rendering
-- Improved data organization with helper functions
-- Better visual design with color-coded activity types
+- `id`: Primary key
+- `activity_id`: Unique Strava ID (prevents duplicates)
+- `name`, `type`, `start_date`, `distance` (meters)

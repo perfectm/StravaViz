@@ -85,32 +85,76 @@ def get_club_activities(token, club_id, per_page=200):
     return activities
 
 def init_db():
+    """
+    Initialize database schema.
+    Note: For multi-user schema, run migrations/001_multiuser_schema.py instead.
+    This maintains backward compatibility for fresh installs.
+    """
     conn = sqlite3.connect('strava_activities.db')
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS activities (
-        id INTEGER PRIMARY KEY,
-        activity_id INTEGER UNIQUE,
-        name TEXT,
-        type TEXT,
-        start_date TEXT,
-        distance REAL
-    )''')
+
+    # Check if new multi-user schema exists
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    has_multiuser = c.fetchone() is not None
+
+    if not has_multiuser:
+        # Legacy single-user schema
+        c.execute('''CREATE TABLE IF NOT EXISTS activities (
+            id INTEGER PRIMARY KEY,
+            activity_id INTEGER UNIQUE,
+            name TEXT,
+            type TEXT,
+            start_date TEXT,
+            distance REAL
+        )''')
+    # If multi-user schema exists, tables are already created by migration
+
     conn.commit()
     conn.close()
 
 # Save new activities to DB and return all activities as DataFrame
-def save_and_get_activities(all_activities):
+def save_and_get_activities(all_activities, user_id=1):
+    """
+    Save new activities to database and return all activities as DataFrame.
+
+    Args:
+        all_activities: List of activity dictionaries from Strava API
+        user_id: User ID to associate activities with (default: 1 for legacy/single-user)
+
+    Returns:
+        DataFrame containing all activities for the specified user
+    """
     conn = sqlite3.connect('strava_activities.db')
     c = conn.cursor()
+
+    # Check if using multi-user schema
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    has_multiuser = c.fetchone() is not None
+
     # Insert only new activities
     for act in all_activities:
         try:
-            c.execute('''INSERT INTO activities (activity_id, name, type, start_date, distance) VALUES (?, ?, ?, ?, ?)''',
-                (act['id'], act['name'], act['type'], act['start_date'], act['distance']))
+            if has_multiuser:
+                # Multi-user schema: include user_id
+                c.execute('''INSERT INTO activities (user_id, activity_id, name, type, start_date, distance)
+                            VALUES (?, ?, ?, ?, ?, ?)''',
+                    (user_id, act['id'], act['name'], act['type'], act['start_date'], act['distance']))
+            else:
+                # Legacy schema: no user_id
+                c.execute('''INSERT INTO activities (activity_id, name, type, start_date, distance)
+                            VALUES (?, ?, ?, ?, ?)''',
+                    (act['id'], act['name'], act['type'], act['start_date'], act['distance']))
         except sqlite3.IntegrityError:
             continue  # Already in DB
+
     conn.commit()
-    df = pd.read_sql_query('SELECT * FROM activities', conn)
+
+    # Fetch activities for this user
+    if has_multiuser:
+        df = pd.read_sql_query('SELECT * FROM activities WHERE user_id = ?', conn, params=(user_id,))
+    else:
+        df = pd.read_sql_query('SELECT * FROM activities', conn)
+
     conn.close()
     return df
 
@@ -137,13 +181,26 @@ def startup_event():
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
+    # Default user_id for single-user/legacy mode
+    user_id = 1
+
     token = get_access_token()
     # Get latest activity in DB
     conn = sqlite3.connect('strava_activities.db')
     c = conn.cursor()
-    c.execute('SELECT MAX(start_date) FROM activities')
+
+    # Check if using multi-user schema
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    has_multiuser = c.fetchone() is not None
+
+    if has_multiuser:
+        c.execute('SELECT MAX(start_date) FROM activities WHERE user_id = ?', (user_id,))
+    else:
+        c.execute('SELECT MAX(start_date) FROM activities')
+
     last_date = c.fetchone()[0]
     conn.close()
+
     # Download new activities only
     activities = []
     page = 1
@@ -161,7 +218,7 @@ def index(request: Request):
             break
         page += 1
     # Save new and get all
-    df = save_and_get_activities(activities)
+    df = save_and_get_activities(activities, user_id=user_id)
     if df.empty:
         debug_html = f"""
         <h2>No activities found or Strava API error.</h2>

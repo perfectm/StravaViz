@@ -42,7 +42,7 @@ REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
 CLUB_ID = os.getenv("STRAVA_CLUB_ID")
 
 # OAuth configuration
-OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8001/auth/callback")
+OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8002/auth/callback")
 
 # Strava API URLs
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"

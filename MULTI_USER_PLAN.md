@@ -106,7 +106,7 @@ Create `migrations/001_multiuser_schema.py`:
 Add to `.env`:
 ```bash
 # OAuth Configuration
-OAUTH_REDIRECT_URI=http://localhost:8001/auth/callback
+OAUTH_REDIRECT_URI=http://localhost:8002/auth/callback
 SESSION_SECRET=your_session_secret_here
 COOKIE_SECURE=false  # Set to true in production with HTTPS
 
@@ -428,7 +428,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8001;
+        proxy_pass http://127.0.0.1:8002;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -449,9 +449,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8001
+EXPOSE 8002
 
-CMD ["uvicorn", "strava_fastapi:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "strava_fastapi:app", "--host", "0.0.0.0", "--port", "8002"]
 ```
 
 Create `docker-compose.yml`:
@@ -461,7 +461,7 @@ services:
   web:
     build: .
     ports:
-      - "8001:8001"
+      - "8002:8002"
     volumes:
       - ./strava_multiuser.db:/app/strava_multiuser.db
       - ./templates:/app/templates

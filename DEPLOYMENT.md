@@ -103,7 +103,7 @@ STRAVA_CLUB_ID=1577284
 
 ```bash
 # Test run (should start successfully)
-uvicorn strava_fastapi:app --host 0.0.0.0 --port 8001
+uvicorn strava_fastapi:app --host 0.0.0.0 --port 8002
 
 # Press Ctrl+C to stop after verifying it works
 ```
@@ -128,7 +128,7 @@ User=strava
 Group=strava
 WorkingDirectory=/home/strava/StravaViz
 Environment="PATH=/home/strava/StravaViz/venv/bin"
-ExecStart=/home/strava/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8001
+ExecStart=/home/strava/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002
 Restart=always
 RestartSec=3
 
@@ -159,8 +159,8 @@ sudo systemctl status stravaviz
 ### 3. Verify Service is Running
 
 ```bash
-# Check if app is listening on port 8001
-curl http://localhost:8001
+# Check if app is listening on port 8002
+curl http://localhost:8002
 
 # View logs
 tail -f /home/strava/StravaViz/production.log
@@ -186,7 +186,7 @@ server {
 
     # Proxy to FastAPI app
     location / {
-        proxy_pass http://127.0.0.1:8001;
+        proxy_pass http://127.0.0.1:8002;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -484,12 +484,12 @@ sudo systemctl status stravaviz
 sudo journalctl -u stravaviz -n 50 --no-pager
 
 # Check if port is already in use
-sudo lsof -i :8001
+sudo lsof -i :8002
 
 # Test app manually
 cd /home/strava/StravaViz
 source venv/bin/activate
-uvicorn strava_fastapi:app --host 127.0.0.1 --port 8001
+uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002
 ```
 
 ### Nginx Issues
@@ -556,7 +556,7 @@ sudo nano /etc/systemd/system/stravaviz.service
 
 Change ExecStart line to:
 ```
-ExecStart=/home/strava/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8001 --workers 4
+ExecStart=/home/strava/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002 --workers 4
 ```
 
 Reload and restart:

@@ -17,7 +17,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 
 # Load environment variables
-OAUTH_REDIRECT_URI = os.getenv('OAUTH_REDIRECT_URI', 'http://localhost:8001/auth/callback')
+OAUTH_REDIRECT_URI = os.getenv('OAUTH_REDIRECT_URI', 'http://localhost:8002/auth/callback')
 SESSION_SECRET = os.getenv('SESSION_SECRET', 'change_this_to_a_random_secret_in_production')
 COOKIE_SECURE = os.getenv('COOKIE_SECURE', 'false').lower() == 'true'
 COOKIE_NAME = 'strava_session'

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 #### Using Shell Scripts (Recommended)
 ```bash
-./start.sh    # Start server in background on port 8001
+./start.sh    # Start server in background on port 8002
 ./stop.sh     # Stop the server
 ./restart.sh  # Restart the server
 ./status.sh   # Check server status
@@ -21,7 +21,7 @@ Server management files:
 #### Manual Start
 ```bash
 pip install -r requirements.txt
-uvicorn strava_fastapi:app --reload --port 8001
+uvicorn strava_fastapi:app --reload --port 8002
 ```
 
 ### Environment Setup

@@ -63,7 +63,7 @@ Updated `requirements.txt`:
 
 Added OAuth environment variables to `.env.example`:
 ```bash
-OAUTH_REDIRECT_URI=http://localhost:8001/auth/callback
+OAUTH_REDIRECT_URI=http://localhost:8002/auth/callback
 SESSION_SECRET=<random_secret>
 COOKIE_SECURE=false  # true in production with HTTPS
 ```
@@ -150,7 +150,7 @@ Before using OAuth, configure at https://developers.strava.com/:
 
 2. **Authorization Callback URL**
    - Must match `OAUTH_REDIRECT_URI` in `.env`
-   - Development: `http://localhost:8001/auth/callback`
+   - Development: `http://localhost:8002/auth/callback`
    - Production: `https://yourdomain.com/auth/callback`
 
 3. **Requested Scopes**
@@ -162,7 +162,7 @@ Before using OAuth, configure at https://developers.strava.com/:
 Update `.env` file:
 ```bash
 # Required for OAuth
-OAUTH_REDIRECT_URI=http://localhost:8001/auth/callback
+OAUTH_REDIRECT_URI=http://localhost:8002/auth/callback
 SESSION_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
 COOKIE_SECURE=false  # Set to true in production
 

@@ -3,51 +3,51 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Strava Activity Dashboard</title>
+    <title>Strava Club Dashboard</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
             color: #333;
             background-color: #f5f5f5;
         }
-        
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 0 20px;
         }
-        
+
         header {
             background: linear-gradient(135deg, #fc4c02, #ff7043);
             color: white;
             padding: 1rem 0;
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
-        
+
         .header-content {
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
-        
+
         .logo {
             font-size: 1.8rem;
             font-weight: bold;
         }
-        
+
         nav ul {
             list-style: none;
             display: flex;
             gap: 2rem;
         }
-        
+
         nav a {
             color: white;
             text-decoration: none;
@@ -55,15 +55,15 @@
             border-radius: 5px;
             transition: background-color 0.3s ease;
         }
-        
+
         nav a:hover {
             background-color: rgba(255,255,255,0.2);
         }
-        
+
         main {
             padding: 2rem 0;
         }
-        
+
         .section {
             background: white;
             margin: 2rem 0;
@@ -71,7 +71,7 @@
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        
+
         .section h2 {
             color: #fc4c02;
             margin-bottom: 1.5rem;
@@ -79,14 +79,14 @@
             border-bottom: 3px solid #fc4c02;
             padding-bottom: 0.5rem;
         }
-        
+
         .overview-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
-        
+
         .stat-card {
             background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
@@ -94,23 +94,23 @@
             border-radius: 10px;
             text-align: center;
         }
-        
+
         .stat-value {
             font-size: 2rem;
             font-weight: bold;
             margin-bottom: 0.5rem;
         }
-        
+
         .stat-label {
             font-size: 0.9rem;
             opacity: 0.9;
         }
-        
+
         .data-table {
             margin-bottom: 2rem;
             overflow-x: auto;
         }
-        
+
         table {
             width: 100%;
             border-collapse: collapse;
@@ -119,53 +119,62 @@
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
-        
+
         th, td {
             padding: 12px 15px;
             text-align: left;
             border-bottom: 1px solid #eee;
         }
-        
+
         th {
             background: #f8f9fa;
             font-weight: 600;
             color: #555;
         }
-        
+
         tr:hover {
             background-color: #f5f5f5;
         }
-        
+
         .chart-container {
             text-align: center;
             margin: 1rem 0;
         }
-        
+
         .chart-container img {
             max-width: 100%;
             height: auto;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
-        
+
         .no-data {
             text-align: center;
             color: #666;
             font-style: italic;
             padding: 2rem;
         }
-        
+
+        .warning-banner {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
         @media (max-width: 768px) {
             .header-content {
                 flex-direction: column;
                 gap: 1rem;
             }
-            
+
             nav ul {
                 flex-wrap: wrap;
                 gap: 1rem;
             }
-            
+
             .overview-grid {
                 grid-template-columns: 1fr;
             }
@@ -176,7 +185,7 @@
     <header>
         <div class="container">
             <div class="header-content">
-                <div class="logo">🏃‍♂️ Strava Dashboard</div>
+                <div class="logo">🏃‍♂️ Strava Club Dashboard</div>
                 <nav>
                     <ul>
                         <li><a href="/">My Dashboard</a></li>
@@ -189,136 +198,116 @@
 
     <main>
         <div class="container">
-            <section id="overview" class="section">
-                <h2>Activity Overview</h2>
+            <section class="section">
+                <h2>Club Overview (Club ID: {{ club_id }})</h2>
+                <div class="warning-banner">
+                    <strong>⚠️ Note:</strong> Club data is limited by the Strava API. Names show as "FirstName L." format,
+                    and only recent activities are available without timestamps. For full data access, consider implementing
+                    individual athlete authentication.
+                </div>
                 <div class="overview-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ athlete_count }}</div>
+                        <div class="stat-label">Active Athletes</div>
+                    </div>
                     <div class="stat-card">
                         <div class="stat-value">{{ total_activities }}</div>
                         <div class="stat-label">Total Activities</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-value">{{ total_distance_km|round(1) }}</div>
+                        <div class="stat-value">{{ total_distance_km }}</div>
                         <div class="stat-label">Total Distance (km)</div>
                     </div>
+                    {% if type_counts.get('Walk') %}
                     <div class="stat-card">
-                        <div class="stat-value">{{ walk_count }}</div>
+                        <div class="stat-value">{{ type_counts['Walk'] }}</div>
                         <div class="stat-label">Walks</div>
                     </div>
+                    {% endif %}
+                    {% if type_counts.get('Hike') %}
                     <div class="stat-card">
-                        <div class="stat-value">{{ hike_count }}</div>
+                        <div class="stat-value">{{ type_counts['Hike'] }}</div>
                         <div class="stat-label">Hikes</div>
                     </div>
+                    {% endif %}
+                    {% if type_counts.get('Run') %}
                     <div class="stat-card">
-                        <div class="stat-value">{{ run_count }}</div>
+                        <div class="stat-value">{{ type_counts['Run'] }}</div>
                         <div class="stat-label">Runs</div>
                     </div>
-                </div>
-                <div class="chart-container">
-                    <img src="data:image/png;base64,{{ combined_chart }}" alt="Combined Monthly Activity Chart"/>
+                    {% endif %}
                 </div>
             </section>
 
-            <section id="walks" class="section">
-                <h2>🚶‍♂️ Walks</h2>
-                {% if recent_walks %}
+            {% if leaderboard_chart %}
+            <section class="section">
+                <h2>🏆 Leaderboard - Top Athletes</h2>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{{ leaderboard_chart }}" alt="Club Leaderboard"/>
+                </div>
+                {% if leaderboard %}
                 <div class="data-table">
-                    <h3>Recent 10 Walks</h3>
                     <table>
                         <thead>
                             <tr>
-                                <th>Date</th>
-                                <th>Name</th>
-                                <th>Distance (km)</th>
+                                <th>Rank</th>
+                                <th>Athlete</th>
+                                <th>Activities</th>
+                                <th>Total Distance (km)</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for activity in recent_walks %}
+                            {% for i, athlete in enumerate(leaderboard, 1) %}
                             <tr>
-                                <td>{{ activity.start_date_str }}</td>
-                                <td>{{ activity.name }}</td>
-                                <td>{{ (activity.distance_km)|round(2) }}</td>
+                                <td>{{ i }}</td>
+                                <td>{{ athlete['athlete.firstname'] }}</td>
+                                <td>{{ athlete['activity_count'] }}</td>
+                                <td>{{ athlete['total_distance_km']|round(2) }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
                 {% endif %}
+            </section>
+            {% endif %}
+
+            {% if type_chart %}
+            <section class="section">
+                <h2>📊 Activity Type Distribution</h2>
                 <div class="chart-container">
-                    {% if walk_chart %}
-                        <img src="data:image/png;base64,{{ walk_chart }}" alt="Walk Monthly Chart"/>
-                    {% else %}
-                        <div class="no-data">No walk data available.</div>
-                    {% endif %}
+                    <img src="data:image/png;base64,{{ type_chart }}" alt="Activity Type Distribution"/>
                 </div>
             </section>
+            {% endif %}
 
-            <section id="hikes" class="section">
-                <h2>🥾 Hikes</h2>
-                {% if recent_hikes %}
+            {% if recent_activities %}
+            <section class="section">
+                <h2>📅 Recent Club Activities</h2>
                 <div class="data-table">
-                    <h3>Recent 10 Hikes</h3>
                     <table>
                         <thead>
                             <tr>
-                                <th>Date</th>
-                                <th>Name</th>
+                                <th>Athlete</th>
+                                <th>Activity</th>
+                                <th>Type</th>
                                 <th>Distance (km)</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for activity in recent_hikes %}
+                            {% for activity in recent_activities %}
                             <tr>
-                                <td>{{ activity.start_date_str }}</td>
-                                <td>{{ activity.name }}</td>
-                                <td>{{ (activity.distance_km)|round(2) }}</td>
+                                <td>{{ activity.get('athlete', {}).get('firstname', 'Unknown') }}</td>
+                                <td>{{ activity.get('name', 'Untitled') }}</td>
+                                <td>{{ activity.get('type', 'N/A') }}</td>
+                                <td>{{ (activity.get('distance', 0) / 1000)|round(2) }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
-                {% endif %}
-                <div class="chart-container">
-                    {% if hike_chart %}
-                        <img src="data:image/png;base64,{{ hike_chart }}" alt="Hike Monthly Chart"/>
-                    {% else %}
-                        <div class="no-data">No hike data available.</div>
-                    {% endif %}
-                </div>
             </section>
-
-            <section id="runs" class="section">
-                <h2>🏃‍♀️ Runs</h2>
-                {% if recent_runs %}
-                <div class="data-table">
-                    <h3>Recent 10 Runs</h3>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Name</th>
-                                <th>Distance (km)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for activity in recent_runs %}
-                            <tr>
-                                <td>{{ activity.start_date_str }}</td>
-                                <td>{{ activity.name }}</td>
-                                <td>{{ (activity.distance_km)|round(2) }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% endif %}
-                <div class="chart-container">
-                    {% if run_chart %}
-                        <img src="data:image/png;base64,{{ run_chart }}" alt="Run Monthly Chart"/>
-                    {% else %}
-                        <div class="no-data">No run data available.</div>
-                    {% endif %}
-                </div>
-            </section>
+            {% endif %}
         </div>
     </main>
 </body>

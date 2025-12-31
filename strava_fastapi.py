@@ -23,9 +23,11 @@ load_dotenv()
 CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
 CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
+CLUB_ID = os.getenv("STRAVA_CLUB_ID")
 
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
+STRAVA_CLUB_ACTIVITIES_URL = "https://www.strava.com/api/v3/clubs/{club_id}/activities"
 
 # Helper to get access token
 def get_access_token():
@@ -51,6 +53,32 @@ def get_activities(token, per_page=200, pages=1):
         )
         if resp.status_code == 200:
             activities.extend(resp.json())
+        else:
+            break
+    return activities
+
+# Helper to get club activities
+def get_club_activities(token, club_id, per_page=200):
+    """
+    Fetch recent activities from club members.
+    Note: This endpoint has limitations - no timestamps, limited data, partial names.
+    """
+    activities = []
+    page = 1
+    while True:
+        resp = requests.get(
+            STRAVA_CLUB_ACTIVITIES_URL.format(club_id=club_id),
+            headers={'Authorization': f'Bearer {token}'},
+            params={'per_page': per_page, 'page': page}
+        )
+        if resp.status_code == 200:
+            page_activities = resp.json()
+            if not page_activities:
+                break
+            activities.extend(page_activities)
+            if len(page_activities) < per_page:
+                break
+            page += 1
         else:
             break
     return activities
@@ -227,5 +255,126 @@ def index(request: Request):
     }
     
     return templates.TemplateResponse("dashboard.html", context)
+
+@app.get("/club", response_class=HTMLResponse)
+def club_dashboard(request: Request):
+    """
+    Display club-wide activity dashboard.
+    Shows aggregated statistics and recent activities from all club members.
+    """
+    if not CLUB_ID:
+        return HTMLResponse("<h2>Club ID not configured</h2><p>Please set STRAVA_CLUB_ID in your .env file</p>")
+
+    token = get_access_token()
+
+    try:
+        # Fetch club activities (limited data from API)
+        club_activities = get_club_activities(token, CLUB_ID)
+
+        if not club_activities:
+            return HTMLResponse(f"""
+                <h2>No club activities found</h2>
+                <p>Club ID: {CLUB_ID}</p>
+                <p>Make sure you're a member of this club and it has recent activities.</p>
+            """)
+
+        # Convert to DataFrame for analysis
+        df = pd.DataFrame(club_activities)
+
+        # Filter for Walk/Hike/Run activities if type field exists
+        if 'type' in df.columns:
+            df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
+
+        if df.empty:
+            return HTMLResponse(f"""
+                <h2>No Walk/Hike/Run activities found</h2>
+                <p>Club has activities but none are Walk, Hike, or Run types.</p>
+            """)
+
+        # Calculate statistics
+        total_activities = len(df)
+        total_distance_km = df['distance'].sum() / 1000 if 'distance' in df.columns else 0
+
+        # Get athlete counts (names are limited to "FirstName L." format)
+        athlete_names = df['athlete.firstname'].unique() if 'athlete.firstname' in df.columns else []
+        athlete_count = len(athlete_names)
+
+        # Activity type breakdown
+        type_counts = df['type'].value_counts().to_dict() if 'type' in df.columns else {}
+
+        # Aggregate by athlete for leaderboard
+        if 'athlete.firstname' in df.columns and 'distance' in df.columns:
+            leaderboard = df.groupby('athlete.firstname').agg({
+                'distance': 'sum',
+                'type': 'count'
+            }).rename(columns={'distance': 'total_distance', 'type': 'activity_count'})
+            leaderboard['total_distance_km'] = leaderboard['total_distance'] / 1000
+            leaderboard = leaderboard.sort_values('total_distance', ascending=False)
+            leaderboard_data = leaderboard.reset_index().to_dict('records')
+        else:
+            leaderboard_data = []
+
+        # Create visualization - Top athletes by distance
+        if leaderboard_data:
+            plt.figure(figsize=(12, 6))
+            top_athletes = leaderboard.head(10)
+            plt.barh(range(len(top_athletes)), top_athletes['total_distance_km'])
+            plt.yticks(range(len(top_athletes)), top_athletes.index)
+            plt.xlabel('Total Distance (km)')
+            plt.title('Club Leaderboard - Top 10 Athletes by Distance')
+            plt.gca().invert_yaxis()
+            plt.tight_layout()
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+            plt.close()
+            buf.seek(0)
+            leaderboard_chart = base64.b64encode(buf.read()).decode('utf-8')
+        else:
+            leaderboard_chart = None
+
+        # Activity type distribution
+        if type_counts:
+            plt.figure(figsize=(10, 6))
+            colors = {'Walk': '#4CAF50', 'Hike': '#FF9800', 'Run': '#2196F3'}
+            activity_colors = [colors.get(act_type, '#666666') for act_type in type_counts.keys()]
+            plt.bar(type_counts.keys(), type_counts.values(), color=activity_colors)
+            plt.xlabel('Activity Type')
+            plt.ylabel('Number of Activities')
+            plt.title('Club Activities by Type')
+            plt.tight_layout()
+
+            buf2 = io.BytesIO()
+            plt.savefig(buf2, format='png', dpi=150, bbox_inches='tight')
+            plt.close()
+            buf2.seek(0)
+            type_chart = base64.b64encode(buf2.read()).decode('utf-8')
+        else:
+            type_chart = None
+
+        # Recent activities (limited to 20)
+        recent_activities = df.head(20).to_dict('records') if not df.empty else []
+
+        context = {
+            "request": request,
+            "club_id": CLUB_ID,
+            "total_activities": total_activities,
+            "total_distance_km": round(total_distance_km, 2),
+            "athlete_count": athlete_count,
+            "leaderboard": leaderboard_data[:10],  # Top 10
+            "leaderboard_chart": leaderboard_chart,
+            "type_chart": type_chart,
+            "type_counts": type_counts,
+            "recent_activities": recent_activities
+        }
+
+        return templates.TemplateResponse("club_dashboard.html", context)
+
+    except Exception as e:
+        return HTMLResponse(f"""
+            <h2>Error fetching club data</h2>
+            <p>Error: {str(e)}</p>
+            <p>Make sure you're a member of club {CLUB_ID} and have proper API permissions.</p>
+        """)
 
 # To run: uvicorn strava_fastapi:app --reload

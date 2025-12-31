@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - Strava Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #fc4c02, #ff7043);
+            color: white;
+            padding: 1rem 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.8rem;
+            font-weight: bold;
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            gap: 2rem;
+        }
+
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
+        }
+
+        nav a:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+
+        main {
+            padding: 2rem 0;
+        }
+
+        .section {
+            background: white;
+            margin: 2rem 0;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .section h2 {
+            color: #fc4c02;
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+            border-bottom: 3px solid #fc4c02;
+            padding-bottom: 0.5rem;
+        }
+
+        .user-info {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 1rem 2rem;
+            margin-bottom: 2rem;
+            align-items: center;
+        }
+
+        .user-info label {
+            font-weight: 600;
+            color: #666;
+        }
+
+        .user-info span {
+            color: #333;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #666;
+        }
+
+        .form-group select {
+            width: 100%;
+            max-width: 400px;
+            padding: 0.75rem;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .form-group select:focus {
+            outline: none;
+            border-color: #fc4c02;
+        }
+
+        .privacy-info {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-top: 0.5rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #fc4c02, #ff7043);
+            color: white;
+            padding: 0.75rem 2rem;
+            border: none;
+            border-radius: 5px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(252, 76, 2, 0.3);
+        }
+
+        .success-message {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            nav ul {
+                flex-wrap: wrap;
+                gap: 1rem;
+            }
+
+            .user-info {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">🏃‍♂️ Settings</div>
+                <nav>
+                    <ul>
+                        <li><a href="/dashboard">My Dashboard</a></li>
+                        <li><a href="/club">Club View</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li style="color: rgba(255,255,255,0.8); padding: 0.5rem 1rem;">👤 {{ user.firstname }} {{ user.lastname }}</li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <section class="section">
+                <h2>Account Information</h2>
+
+                {% if request.query_params.get('updated') == 'true' %}
+                <div class="success-message">
+                    ✅ Settings updated successfully!
+                </div>
+                {% endif %}
+
+                <div class="user-info">
+                    <label>Name:</label>
+                    <span>{{ user.firstname }} {{ user.lastname }}</span>
+
+                    <label>Strava ID:</label>
+                    <span>{{ user.strava_athlete_id }}</span>
+
+                    <label>Account Created:</label>
+                    <span>{{ user.created_at }}</span>
+
+                    <label>Last Login:</label>
+                    <span>{{ user.last_login or 'N/A' }}</span>
+
+                    <label>Privacy Level:</label>
+                    <span>{{ user.privacy_level }}</span>
+                </div>
+            </section>
+
+            <section class="section">
+                <h2>Privacy Settings</h2>
+
+                <form action="/settings/privacy" method="post">
+                    <div class="form-group">
+                        <label for="privacy_level">Who can see your data?</label>
+                        <select id="privacy_level" name="privacy_level">
+                            <option value="public" {% if user.privacy_level == 'public' %}selected{% endif %}>
+                                Public - Visible to everyone
+                            </option>
+                            <option value="club_only" {% if user.privacy_level == 'club_only' %}selected{% endif %}>
+                                Club Only - Visible to club members (Recommended)
+                            </option>
+                            <option value="private" {% if user.privacy_level == 'private' %}selected{% endif %}>
+                                Private - Only visible to you
+                            </option>
+                        </select>
+
+                        <div class="privacy-info">
+                            <strong>Privacy Levels Explained:</strong>
+                            <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+                                <li><strong>Public:</strong> Your activities and statistics are visible to anyone viewing the dashboard</li>
+                                <li><strong>Club Only:</strong> Only authenticated club members can see your data on the club leaderboard</li>
+                                <li><strong>Private:</strong> Your data is completely hidden from club views and leaderboards</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn">Save Privacy Settings</button>
+                </form>
+            </section>
+
+            <section class="section">
+                <h2>Data Management</h2>
+                <p>Your activity data is automatically synced from Strava when you log in.</p>
+                <p style="margin-top: 1rem; color: #666;">
+                    <strong>Last sync:</strong> When you logged in or visited your dashboard
+                </p>
+            </section>
+        </div>
+    </main>
+</body>
+</html>

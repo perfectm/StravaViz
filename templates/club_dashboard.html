@@ -188,8 +188,13 @@
                 <div class="logo">🏃‍♂️ Strava Club Dashboard</div>
                 <nav>
                     <ul>
-                        <li><a href="/">My Dashboard</a></li>
+                        <li><a href="/dashboard">My Dashboard</a></li>
                         <li><a href="/club">Club View</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li style="color: rgba(255,255,255,0.8); padding: 0.5rem 1rem;">👤 {{ user.firstname }} {{ user.lastname }}</li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
                     </ul>
                 </nav>
             </div>

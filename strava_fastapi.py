@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request, Depends, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 import requests
 import pandas as pd
@@ -13,6 +13,21 @@ import os
 from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
+
+# Import authentication utilities
+from auth import (
+    get_current_user,
+    get_current_user_optional,
+    create_or_update_user,
+    create_session,
+    create_session_cookie,
+    clear_session_cookie,
+    get_session_from_cookie,
+    delete_session,
+    generate_oauth_state,
+    refresh_user_token
+)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -26,9 +41,15 @@ CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
 CLUB_ID = os.getenv("STRAVA_CLUB_ID")
 
+# OAuth configuration
+OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8001/auth/callback")
+
+# Strava API URLs
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
+STRAVA_AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
 STRAVA_ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
 STRAVA_CLUB_ACTIVITIES_URL = "https://www.strava.com/api/v3/clubs/{club_id}/activities"
+STRAVA_ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 
 # Helper to get access token
 def get_access_token():
@@ -179,12 +200,235 @@ def get_activity_stats(df):
 def startup_event():
     init_db()
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request):
-    # Default user_id for single-user/legacy mode
-    user_id = 1
 
-    token = get_access_token()
+# ============================================================================
+# Authentication Routes
+# ============================================================================
+
+@app.get("/auth/login")
+async def auth_login(response: Response):
+    """
+    Initiate OAuth login with Strava
+    Redirects to Strava authorization page
+    """
+    # Generate state for CSRF protection
+    state = generate_oauth_state()
+
+    # Store state in cookie for verification
+    response = RedirectResponse(url=STRAVA_AUTHORIZE_URL)
+    response.set_cookie(
+        key='oauth_state',
+        value=state,
+        max_age=600,  # 10 minutes
+        httponly=True,
+        samesite='lax'
+    )
+
+    # Build authorization URL
+    params = {
+        'client_id': CLIENT_ID,
+        'redirect_uri': OAUTH_REDIRECT_URI,
+        'response_type': 'code',
+        'approval_prompt': 'auto',
+        'scope': 'read,activity:read_all',
+        'state': state
+    }
+
+    auth_url = f"{STRAVA_AUTHORIZE_URL}?{urlencode(params)}"
+
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request, response: Response, code: str = None, state: str = None, error: str = None):
+    """
+    OAuth callback from Strava
+    Exchanges code for tokens and creates user session
+    """
+    # Check for errors
+    if error:
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_title": "Authentication Failed",
+            "error_message": f"Strava returned an error: {error}"
+        })
+
+    # Verify state (CSRF protection)
+    oauth_state = request.cookies.get('oauth_state')
+    if not oauth_state or oauth_state != state:
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_title": "Authentication Failed",
+            "error_message": "Invalid state parameter. Please try logging in again."
+        })
+
+    # Exchange code for tokens
+    try:
+        token_response = requests.post(
+            STRAVA_TOKEN_URL,
+            data={
+                'client_id': CLIENT_ID,
+                'client_secret': CLIENT_SECRET,
+                'code': code,
+                'grant_type': 'authorization_code'
+            }
+        )
+
+        if token_response.status_code != 200:
+            return templates.TemplateResponse("error.html", {
+                "request": request,
+                "error_title": "Authentication Failed",
+                "error_message": "Failed to exchange authorization code for tokens."
+            })
+
+        token_data = token_response.json()
+
+        # Extract tokens and athlete data
+        access_token = token_data['access_token']
+        refresh_token = token_data['refresh_token']
+        expires_at = token_data['expires_at']
+        athlete_data = token_data['athlete']
+
+        # Create or update user
+        user = create_or_update_user(athlete_data, access_token, refresh_token, expires_at)
+
+        # Create session
+        session_id = create_session(user['id'])
+
+        # Set session cookie
+        response = RedirectResponse(url="/dashboard")
+        create_session_cookie(response, session_id)
+
+        # Clear oauth_state cookie
+        response.delete_cookie(key='oauth_state')
+
+        return response
+
+    except Exception as e:
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_title": "Authentication Failed",
+            "error_message": f"An error occurred during authentication: {str(e)}"
+        })
+
+
+@app.get("/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    """Logout user and clear session"""
+    # Get session ID from cookie
+    session_id = get_session_from_cookie(request)
+
+    if session_id:
+        # Delete session from database
+        delete_session(session_id)
+
+    # Clear session cookie and redirect to landing page
+    response = RedirectResponse(url="/")
+    clear_session_cookie(response)
+
+    return response
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings(request: Request, user: dict = Depends(get_current_user)):
+    """User settings page"""
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.post("/settings/privacy")
+async def update_privacy(request: Request, user: dict = Depends(get_current_user)):
+    """Update user privacy settings"""
+    from fastapi import Form
+
+    form_data = await request.form()
+    privacy_level = form_data.get('privacy_level', 'club_only')
+
+    # Validate privacy level
+    if privacy_level not in ['public', 'club_only', 'private']:
+        privacy_level = 'club_only'
+
+    # Update database
+    conn = sqlite3.connect('strava_activities.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE users SET privacy_level = ? WHERE id = ?
+    """, (privacy_level, user['id']))
+    conn.commit()
+    conn.close()
+
+    # Redirect back to settings
+    return RedirectResponse(url="/settings?updated=true", status_code=303)
+
+
+# ============================================================================
+# Main Application Routes
+# ============================================================================
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """
+    Landing page - shows login button for unauthenticated users
+    Redirects to dashboard if already authenticated
+    """
+    # Check if user is already logged in
+    user = await get_current_user_optional(request)
+
+    if user:
+        # Already logged in, redirect to dashboard
+        return RedirectResponse(url="/dashboard")
+
+    # Show landing page with optional club stats
+    club_stats = None
+    if CLUB_ID:
+        try:
+            # Fetch basic club stats for landing page
+            token = get_access_token()
+            club_activities = get_club_activities(token, CLUB_ID, per_page=100)
+
+            if club_activities:
+                import pandas as pd
+                df = pd.DataFrame(club_activities)
+
+                # Extract athlete names
+                if 'athlete' in df.columns:
+                    df['athlete.firstname'] = df['athlete'].apply(
+                        lambda x: x.get('firstname', 'Unknown') if isinstance(x, dict) else 'Unknown'
+                    )
+
+                # Filter to relevant types
+                if 'type' in df.columns:
+                    df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
+
+                if not df.empty:
+                    club_stats = {
+                        'total_activities': len(df),
+                        'total_distance_km': df['distance'].sum() / 1000 if 'distance' in df.columns else 0,
+                        'athlete_count': len(df['athlete.firstname'].unique()) if 'athlete.firstname' in df.columns else 0
+                    }
+        except Exception:
+            pass  # Ignore errors loading club stats for landing page
+
+    return templates.TemplateResponse("landing.html", {
+        "request": request,
+        "club_stats": club_stats
+    })
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Personal dashboard - requires authentication
+    Shows user's personal activity statistics and charts
+    """
+    # Refresh user's access token if needed
+    user = refresh_user_token(user)
+    user_id = user['id']
+
+    # Use user's access token instead of global refresh token
+    token = user['access_token']
     # Get latest activity in DB
     conn = sqlite3.connect('strava_activities.db')
     c = conn.cursor()
@@ -302,6 +546,7 @@ def index(request: Request):
     
     context = {
         "request": request,
+        "user": user,  # Add authenticated user information
         "combined_chart": combined_chart,
         "walk_chart": activity_charts.get('Walk'),
         "hike_chart": activity_charts.get('Hike'),
@@ -311,19 +556,22 @@ def index(request: Request):
         "recent_runs": format_activities_for_template(recent_runs),
         **stats
     }
-    
+
     return templates.TemplateResponse("dashboard.html", context)
 
 @app.get("/club", response_class=HTMLResponse)
-def club_dashboard(request: Request):
+async def club_dashboard(request: Request, user: dict = Depends(get_current_user)):
     """
     Display club-wide activity dashboard.
     Shows aggregated statistics and recent activities from all club members.
+    Requires authentication.
     """
     if not CLUB_ID:
         return HTMLResponse("<h2>Club ID not configured</h2><p>Please set STRAVA_CLUB_ID in your .env file</p>")
 
-    token = get_access_token()
+    # Refresh user's token if needed
+    user = refresh_user_token(user)
+    token = user['access_token']
 
     try:
         # Fetch club activities (limited data from API)
@@ -449,6 +697,7 @@ def club_dashboard(request: Request):
 
         context = {
             "request": request,
+            "user": user,  # Add authenticated user information
             "club_id": CLUB_ID,
             "total_activities": total_activities,
             "total_distance_km": round(total_distance_km, 2),

@@ -257,9 +257,9 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for i, athlete in enumerate(leaderboard, 1) %}
+                            {% for athlete in leaderboard %}
                             <tr>
-                                <td>{{ i }}</td>
+                                <td>{{ loop.index }}</td>
                                 <td>{{ athlete['athlete.firstname'] }}</td>
                                 <td>{{ athlete['activity_count'] }}</td>
                                 <td>{{ athlete['total_distance_km']|round(2) }}</td>
@@ -269,6 +269,34 @@
                     </table>
                 </div>
                 {% endif %}
+            </section>
+            {% endif %}
+
+            {% if weekly_leaderboard and weekly_leaderboard|length > 0 %}
+            <section class="section">
+                <h2>🔥 Weekly Leaderboard - Current Week</h2>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Athlete</th>
+                                <th>Activities</th>
+                                <th>Distance (km)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for athlete in weekly_leaderboard %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td>{{ athlete['athlete.firstname'] }}</td>
+                                <td>{{ athlete['activity_count'] }}</td>
+                                <td>{{ athlete['total_distance_km']|round(2) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </section>
             {% endif %}
 

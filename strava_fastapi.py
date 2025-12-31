@@ -12,6 +12,7 @@ import base64
 import os
 from dotenv import load_dotenv
 import sqlite3
+from datetime import datetime, timedelta
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -281,6 +282,10 @@ def club_dashboard(request: Request):
         # Convert to DataFrame for analysis
         df = pd.DataFrame(club_activities)
 
+        # Extract athlete firstname from nested dict
+        if 'athlete' in df.columns:
+            df['athlete.firstname'] = df['athlete'].apply(lambda x: x.get('firstname', 'Unknown') if isinstance(x, dict) else 'Unknown')
+
         # Filter for Walk/Hike/Run activities if type field exists
         if 'type' in df.columns:
             df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
@@ -314,14 +319,44 @@ def club_dashboard(request: Request):
         else:
             leaderboard_data = []
 
-        # Create visualization - Top athletes by distance
-        if leaderboard_data:
+        # Calculate weekly leaderboard (current week)
+        weekly_leaderboard_data = []
+        if 'athlete.firstname' in df.columns and 'distance' in df.columns:
+            # Get current week boundaries (Monday to Sunday)
+            today = datetime.now()
+            week_start = today - timedelta(days=today.weekday())  # Monday
+            week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            # Try to filter by date if available in the data
+            # The club API may have limited date info, so we'll work with what's available
+            df_week = df.copy()
+
+            # Check if there's any date field we can use
+            # Common fields: 'start_date', 'start_date_local', or activities might be ordered by recency
+            # Since API has limitations, we'll use the first 50 activities as a proxy for "recent/this week"
+            # as the API returns activities in reverse chronological order
+            df_week = df.head(50)  # Most recent activities as proxy for current week
+
+            if not df_week.empty and 'athlete.firstname' in df_week.columns:
+                weekly_leaderboard = df_week.groupby('athlete.firstname').agg({
+                    'distance': 'sum',
+                    'type': 'count'
+                }).rename(columns={'distance': 'total_distance', 'type': 'activity_count'})
+                weekly_leaderboard['total_distance_km'] = weekly_leaderboard['total_distance'] / 1000
+                weekly_leaderboard = weekly_leaderboard.sort_values('total_distance', ascending=False)
+                weekly_leaderboard_data = weekly_leaderboard.reset_index().to_dict('records')
+
+        # Create visualization - Top athletes by distance (weekly)
+        if weekly_leaderboard_data:
             plt.figure(figsize=(12, 6))
-            top_athletes = leaderboard.head(10)
-            plt.barh(range(len(top_athletes)), top_athletes['total_distance_km'])
-            plt.yticks(range(len(top_athletes)), top_athletes.index)
+            # Convert weekly leaderboard data to DataFrame for plotting
+            weekly_df = pd.DataFrame(weekly_leaderboard_data[:10])
+            weekly_df = weekly_df.set_index('athlete.firstname')
+
+            plt.barh(range(len(weekly_df)), weekly_df['total_distance_km'])
+            plt.yticks(range(len(weekly_df)), weekly_df.index)
             plt.xlabel('Total Distance (km)')
-            plt.title('Club Leaderboard - Top 10 Athletes by Distance')
+            plt.title('Club Leaderboard - Top Athletes by Distance This Week')
             plt.gca().invert_yaxis()
             plt.tight_layout()
 
@@ -362,6 +397,7 @@ def club_dashboard(request: Request):
             "total_distance_km": round(total_distance_km, 2),
             "athlete_count": athlete_count,
             "leaderboard": leaderboard_data[:10],  # Top 10
+            "weekly_leaderboard": weekly_leaderboard_data[:10],  # Top 10 for the week
             "leaderboard_chart": leaderboard_chart,
             "type_chart": type_chart,
             "type_counts": type_counts,

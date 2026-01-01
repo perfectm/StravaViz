@@ -60,6 +60,32 @@
             background-color: rgba(255,255,255,0.2);
         }
 
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: rgba(255,255,255,0.9);
+            padding: 0.5rem 1rem;
+        }
+
+        .profile-pic {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+        }
+
+        .profile-placeholder {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
         main {
             padding: 2rem 0;
         }
@@ -185,14 +211,21 @@
     <header>
         <div class="container">
             <div class="header-content">
-                <div class="logo">🏃‍♂️ Strava Club Dashboard</div>
+                <div class="logo">🔒 Strava Club Dashboard</div>
                 <nav>
                     <ul>
                         <li><a href="/dashboard">My Dashboard</a></li>
                         <li><a href="/club">Club View</a></li>
                         {% if user %}
                         <li><a href="/settings">Settings</a></li>
-                        <li style="color: rgba(255,255,255,0.8); padding: 0.5rem 1rem;">👤 {{ user.firstname }} {{ user.lastname }}</li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">👤</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
                         <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
                         {% endif %}
                     </ul>
@@ -212,10 +245,6 @@
                 </div>
                 <div class="overview-grid">
                     <div class="stat-card">
-                        <div class="stat-value">{{ athlete_count }}</div>
-                        <div class="stat-label">Active Athletes</div>
-                    </div>
-                    <div class="stat-card">
                         <div class="stat-value">{{ total_activities }}</div>
                         <div class="stat-label">Total Activities</div>
                     </div>
@@ -223,34 +252,38 @@
                         <div class="stat-value">{{ total_distance_km }}</div>
                         <div class="stat-label">Total Distance (km)</div>
                     </div>
-                    {% if type_counts.get('Walk') %}
                     <div class="stat-card">
-                        <div class="stat-value">{{ type_counts['Walk'] }}</div>
-                        <div class="stat-label">Walks</div>
+                        <div class="stat-value">{{ total_duration_hours }}</div>
+                        <div class="stat-label">Total Duration (hrs)</div>
                     </div>
-                    {% endif %}
-                    {% if type_counts.get('Hike') %}
+                </div>
+                <div class="overview-grid" style="margin-top: 20px;">
                     <div class="stat-card">
-                        <div class="stat-value">{{ type_counts['Hike'] }}</div>
-                        <div class="stat-label">Hikes</div>
+                        <div class="stat-value">{{ walk_count }}</div>
+                        <div class="stat-label">🚶 Walks</div>
                     </div>
-                    {% endif %}
-                    {% if type_counts.get('Run') %}
                     <div class="stat-card">
-                        <div class="stat-value">{{ type_counts['Run'] }}</div>
-                        <div class="stat-label">Runs</div>
+                        <div class="stat-value">{{ hike_count }}</div>
+                        <div class="stat-label">🥾 Hikes</div>
                     </div>
-                    {% endif %}
+                    <div class="stat-card">
+                        <div class="stat-value">{{ run_count }}</div>
+                        <div class="stat-label">🏃 Runs</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ ride_count }}</div>
+                        <div class="stat-label">🚴 Rides</div>
+                    </div>
                 </div>
             </section>
 
             {% if leaderboard_chart %}
             <section class="section">
-                <h2>🏆 Leaderboard - Top Athletes</h2>
+                <h2>🏆 Leaderboard - Top Athletes (This Week)</h2>
                 <div class="chart-container">
                     <img src="data:image/png;base64,{{ leaderboard_chart }}" alt="Club Leaderboard"/>
                 </div>
-                {% if leaderboard %}
+                {% if weekly_leaderboard %}
                 <div class="data-table">
                     <table>
                         <thead>
@@ -258,11 +291,11 @@
                                 <th>Rank</th>
                                 <th>Athlete</th>
                                 <th>Activities</th>
-                                <th>Total Distance (km)</th>
+                                <th>Distance (km)</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for athlete in leaderboard %}
+                            {% for athlete in weekly_leaderboard %}
                             <tr>
                                 <td>{{ loop.index }}</td>
                                 <td>{{ athlete['athlete.firstname'] }}</td>
@@ -297,6 +330,72 @@
                                 <td>{{ athlete['athlete.firstname'] }}</td>
                                 <td>{{ athlete['activity_count'] }}</td>
                                 <td>{{ athlete['total_distance_km']|round(2) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if trophy_leaderboard and trophy_leaderboard|length > 0 %}
+            <section class="section">
+                <h2>🏆 Weekly Trophy Leaderboard - All Time</h2>
+                <p style="color: #666; margin-bottom: 20px;">Athletes are awarded a trophy for having the longest distance each week (Monday-Sunday). Ties result in multiple trophies awarded.</p>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Athlete</th>
+                                <th>🏆 Trophies</th>
+                                <th>Total Winning Distance (km)</th>
+                                <th>First Trophy</th>
+                                <th>Latest Trophy</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for athlete in trophy_leaderboard %}
+                            <tr {% if loop.index == 1 %}style="background-color: #fff9e6;"{% endif %}>
+                                <td>
+                                    {% if loop.index == 1 %}🥇
+                                    {% elif loop.index == 2 %}🥈
+                                    {% elif loop.index == 3 %}🥉
+                                    {% else %}{{ loop.index }}{% endif %}
+                                </td>
+                                <td><strong>{{ athlete['firstname'] }} {{ athlete['lastname'] }}</strong></td>
+                                <td><strong>{{ athlete['trophy_count'] }}</strong></td>
+                                <td>{{ (athlete['total_winning_distance'] / 1000)|round(2) }}</td>
+                                <td>{{ athlete['first_trophy'] }}</td>
+                                <td>{{ athlete['latest_trophy'] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if recent_trophy_winners and recent_trophy_winners|length > 0 %}
+            <section class="section">
+                <h2>🎖️ Recent Weekly Champions</h2>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Week</th>
+                                <th>Champion</th>
+                                <th>Distance (km)</th>
+                                <th>Activities</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for winner in recent_trophy_winners %}
+                            <tr>
+                                <td>{{ winner['week_start'] }} to {{ winner['week_end'] }}</td>
+                                <td>🏆 <strong>{{ winner['firstname'] }} {{ winner['lastname'] }}</strong></td>
+                                <td>{{ (winner['total_distance'] / 1000)|round(2) }}</td>
+                                <td>{{ winner['activity_count'] }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

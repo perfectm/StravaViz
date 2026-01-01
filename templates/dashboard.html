@@ -59,7 +59,33 @@
         nav a:hover {
             background-color: rgba(255,255,255,0.2);
         }
-        
+
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: rgba(255,255,255,0.9);
+            padding: 0.5rem 1rem;
+        }
+
+        .profile-pic {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+        }
+
+        .profile-placeholder {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
         main {
             padding: 2rem 0;
         }
@@ -176,14 +202,21 @@
     <header>
         <div class="container">
             <div class="header-content">
-                <div class="logo">🏃‍♂️ Strava Dashboard</div>
+                <div class="logo">🔒 Strava Dashboard</div>
                 <nav>
                     <ul>
                         <li><a href="/dashboard">My Dashboard</a></li>
                         <li><a href="/club">Club View</a></li>
                         {% if user %}
                         <li><a href="/settings">Settings</a></li>
-                        <li style="color: rgba(255,255,255,0.8); padding: 0.5rem 1rem;">👤 {{ user.firstname }} {{ user.lastname }}</li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">👤</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
                         <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
                         {% endif %}
                     </ul>
@@ -206,22 +239,107 @@
                         <div class="stat-label">Total Distance (km)</div>
                     </div>
                     <div class="stat-card">
+                        <div class="stat-value">{{ total_duration_hours }}</div>
+                        <div class="stat-label">Total Duration (hrs)</div>
+                    </div>
+                </div>
+                <div class="overview-grid" style="margin-top: 20px;">
+                    <div class="stat-card">
                         <div class="stat-value">{{ walk_count }}</div>
-                        <div class="stat-label">Walks</div>
+                        <div class="stat-label">🚶 Walks</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value">{{ hike_count }}</div>
-                        <div class="stat-label">Hikes</div>
+                        <div class="stat-label">🥾 Hikes</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value">{{ run_count }}</div>
-                        <div class="stat-label">Runs</div>
+                        <div class="stat-label">🏃 Runs</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ ride_count }}</div>
+                        <div class="stat-label">🚴 Rides</div>
                     </div>
                 </div>
                 <div class="chart-container">
                     <img src="data:image/png;base64,{{ combined_chart }}" alt="Combined Monthly Activity Chart"/>
                 </div>
             </section>
+
+            {% if weekly_progress %}
+            <section class="section">
+                <h2>📅 This Week's Progress</h2>
+                <p style="color: #666; margin-bottom: 1.5rem;">{{ weekly_progress.week_start }} - {{ weekly_progress.week_end }}</p>
+                <div class="overview-grid">
+                    <div class="stat-card" style="background: linear-gradient(135deg, #11998e, #38ef7d);">
+                        <div class="stat-value">{{ weekly_progress.current_distance }}</div>
+                        <div class="stat-label">Kilometers This Week</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #f093fb, #f5576c);">
+                        <div class="stat-value">{{ weekly_progress.current_activities }}</div>
+                        <div class="stat-label">Activities This Week</div>
+                    </div>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if personal_records %}
+            <section class="section">
+                <h2>🏆 Personal Records</h2>
+                <div class="overview-grid">
+                    {% if personal_records.longest_distance %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #fa709a, #fee140);">
+                        <div class="stat-value">{{ personal_records.longest_distance.value }} km</div>
+                        <div class="stat-label">Longest Distance</div>
+                        <div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.9;">
+                            {{ personal_records.longest_distance.name }}<br>
+                            {{ personal_records.longest_distance.date }}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if personal_records.most_elevation %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #30cfd0, #330867);">
+                        <div class="stat-value">{{ personal_records.most_elevation.value }} m</div>
+                        <div class="stat-label">Most Elevation Gain</div>
+                        <div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.9;">
+                            {{ personal_records.most_elevation.name }}<br>
+                            {{ personal_records.most_elevation.date }}
+                        </div>
+                    </div>
+                    {% endif %}
+                    {% if personal_records.most_weekly_activities %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #a8edea, #fed6e3);">
+                        <div class="stat-value">{{ personal_records.most_weekly_activities.value }}</div>
+                        <div class="stat-label">Most Activities (Week)</div>
+                        <div style="font-size: 0.8rem; margin-top: 0.5rem; opacity: 0.9;">
+                            {{ personal_records.most_weekly_activities.week }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+            {% endif %}
+
+            {% if club_comparison %}
+            <section class="section">
+                <h2>📊 Club Comparison</h2>
+                <p style="color: #666; margin-bottom: 1.5rem;">How you compare to other club members</p>
+                <div class="overview-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ club_comparison.user_distance }} km</div>
+                        <div class="stat-label">Your Total Distance</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ club_comparison.club_avg_distance }} km</div>
+                        <div class="stat-label">Club Average Distance</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">{{ club_comparison.distance_percentile|int }}%</div>
+                        <div class="stat-label">Of Club Average</div>
+                    </div>
+                </div>
+            </section>
+            {% endif %}
 
             <section id="walks" class="section">
                 <h2>🚶‍♂️ Walks</h2>
@@ -321,6 +439,40 @@
                         <img src="data:image/png;base64,{{ run_chart }}" alt="Run Monthly Chart"/>
                     {% else %}
                         <div class="no-data">No run data available.</div>
+                    {% endif %}
+                </div>
+            </section>
+
+            <section class="section">
+                <h2>🚴 Rides</h2>
+                {% if recent_rides %}
+                <div class="data-table">
+                    <h3>Recent 10 Rides</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Name</th>
+                                <th>Distance (km)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for activity in recent_rides %}
+                            <tr>
+                                <td>{{ activity.start_date_str }}</td>
+                                <td>{{ activity.name }}</td>
+                                <td>{{ (activity.distance_km)|round(2) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+                <div class="chart-container">
+                    {% if ride_chart %}
+                        <img src="data:image/png;base64,{{ ride_chart }}" alt="Ride Monthly Chart"/>
+                    {% else %}
+                        <div class="no-data">No ride data available.</div>
                     {% endif %}
                 </div>
             </section>

@@ -60,6 +60,32 @@
             background-color: rgba(255,255,255,0.2);
         }
 
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: rgba(255,255,255,0.9);
+            padding: 0.5rem 1rem;
+        }
+
+        .profile-pic {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+        }
+
+        .profile-placeholder {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
         main {
             padding: 2rem 0;
         }
@@ -179,14 +205,21 @@
     <header>
         <div class="container">
             <div class="header-content">
-                <div class="logo">🏃‍♂️ Settings</div>
+                <div class="logo">🔒 Settings</div>
                 <nav>
                     <ul>
                         <li><a href="/dashboard">My Dashboard</a></li>
                         <li><a href="/club">Club View</a></li>
                         {% if user %}
                         <li><a href="/settings">Settings</a></li>
-                        <li style="color: rgba(255,255,255,0.8); padding: 0.5rem 1rem;">👤 {{ user.firstname }} {{ user.lastname }}</li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">👤</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
                         <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
                         {% endif %}
                     </ul>

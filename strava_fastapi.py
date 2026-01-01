@@ -29,8 +29,74 @@ from auth import (
     refresh_user_token
 )
 
+# Import background sync service
+from sync_service import (
+    sync_all_users,
+    sync_user_activities,
+    calculate_weekly_trophies,
+    get_trophy_leaderboard,
+    get_recent_trophy_winners
+)
+from apscheduler.schedulers.background import BackgroundScheduler
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+# Initialize background scheduler
+scheduler = BackgroundScheduler()
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background scheduler on app startup"""
+    logger.info("Starting background activity sync scheduler...")
+
+    # Schedule sync_all_users to run every 15 minutes
+    scheduler.add_job(
+        sync_all_users,
+        'interval',
+        minutes=15,
+        id='sync_all_users',
+        replace_existing=True,
+        max_instances=1  # Prevent overlapping executions
+    )
+
+    # Schedule weekly trophy calculation to run daily at 1 AM
+    scheduler.add_job(
+        calculate_weekly_trophies,
+        'cron',
+        hour=1,
+        minute=0,
+        id='calculate_trophies',
+        replace_existing=True,
+        max_instances=1
+    )
+
+    scheduler.start()
+    logger.info("Background scheduler started:")
+    logger.info("  - Activity sync: every 15 minutes")
+    logger.info("  - Trophy calculation: daily at 1:00 AM")
+
+    # Run an initial sync on startup (after 30 seconds delay)
+    scheduler.add_job(
+        sync_all_users,
+        'date',
+        run_date=datetime.now() + timedelta(seconds=30),
+        id='initial_sync'
+    )
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop background scheduler on app shutdown"""
+    logger.info("Stopping background scheduler...")
+    scheduler.shutdown()
+    logger.info("Background scheduler stopped")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -41,8 +107,33 @@ CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
 CLUB_ID = os.getenv("STRAVA_CLUB_ID")
 
-# OAuth configuration
-OAUTH_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8002/auth/callback")
+# OAuth configuration (fallback - will be dynamically determined per request)
+OAUTH_REDIRECT_URI_FALLBACK = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8002/auth/callback")
+
+
+def get_oauth_redirect_uri(request: Request) -> str:
+    """
+    Dynamically determine OAuth redirect URI based on the incoming request.
+    This allows the app to work in multiple environments (dev/prod) automatically.
+
+    Examples:
+    - localhost:8002 -> http://localhost:8002/auth/callback
+    - closet.cottonmike.com -> http://closet.cottonmike.com/auth/callback
+    - strava.cottonmike.com -> http://strava.cottonmike.com/auth/callback
+    """
+    # Get the host from the request
+    host = request.headers.get('host', 'localhost:8002')
+
+    # Determine protocol (check if behind a proxy with HTTPS)
+    proto = request.headers.get('x-forwarded-proto', 'http')
+
+    # If running on standard ports (80/443), don't include port in URL
+    if ':80' in host and proto == 'http':
+        host = host.replace(':80', '')
+    elif ':443' in host and proto == 'https':
+        host = host.replace(':443', '')
+
+    return f"{proto}://{host}/auth/callback"
 
 # Strava API URLs
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
@@ -84,6 +175,9 @@ def get_club_activities(token, club_id, per_page=200):
     """
     Fetch recent activities from club members.
     Note: This endpoint has limitations - no timestamps, limited data, partial names.
+
+    Returns:
+        tuple: (activities_list, error_message or None)
     """
     activities = []
     page = 1
@@ -101,9 +195,16 @@ def get_club_activities(token, club_id, per_page=200):
             if len(page_activities) < per_page:
                 break
             page += 1
+        elif resp.status_code == 429:
+            return None, "Strava API rate limit exceeded. Please wait 15 minutes and try again."
+        elif resp.status_code == 401:
+            return None, "Authentication failed. Please log in again."
+        elif resp.status_code == 404:
+            return None, f"Club {club_id} not found. Make sure you're a member of this club."
         else:
-            break
-    return activities
+            return None, f"API error: {resp.status_code} - {resp.text[:200]}"
+
+    return activities, None
 
 def init_db():
     """
@@ -187,14 +288,153 @@ def get_recent_activities_by_type(df, activity_type, limit=10):
     return type_df
 
 def get_activity_stats(df):
+    # Calculate total duration in hours
+    total_duration_hours = 0
+    if 'moving_time' in df.columns:
+        total_duration_hours = df['moving_time'].sum() / 3600  # Convert seconds to hours
+    elif 'elapsed_time' in df.columns:
+        total_duration_hours = df['elapsed_time'].sum() / 3600
+
     stats = {
         'total_activities': len(df),
         'total_distance_km': df['distance_km'].sum(),
+        'total_duration_hours': round(total_duration_hours, 1),
         'walk_count': len(df[df['type'] == 'Walk']),
         'hike_count': len(df[df['type'] == 'Hike']),
-        'run_count': len(df[df['type'] == 'Run'])
+        'run_count': len(df[df['type'] == 'Run']),
+        'ride_count': len(df[df['type'] == 'Ride'])
     }
     return stats
+
+def get_personal_records(df):
+    """Calculate personal records from activities"""
+    if df.empty:
+        return None
+
+    records = {}
+
+    # Longest single activity
+    if 'distance_km' in df.columns and not df.empty:
+        longest_idx = df['distance_km'].idxmax()
+        records['longest_distance'] = {
+            'value': round(df.loc[longest_idx, 'distance_km'], 2),
+            'name': df.loc[longest_idx, 'name'],
+            'date': df.loc[longest_idx, 'start_date'].strftime('%Y-%m-%d') if pd.notnull(df.loc[longest_idx, 'start_date']) else 'N/A',
+            'type': df.loc[longest_idx, 'type']
+        }
+
+    # Most elevation gain
+    if 'total_elevation_gain' in df.columns:
+        elevation_df = df[df['total_elevation_gain'].notnull() & (df['total_elevation_gain'] > 0)]
+        if not elevation_df.empty:
+            elevation_idx = elevation_df['total_elevation_gain'].idxmax()
+            records['most_elevation'] = {
+                'value': round(elevation_df.loc[elevation_idx, 'total_elevation_gain'], 1),
+                'name': elevation_df.loc[elevation_idx, 'name'],
+                'date': elevation_df.loc[elevation_idx, 'start_date'].strftime('%Y-%m-%d') if pd.notnull(elevation_df.loc[elevation_idx, 'start_date']) else 'N/A',
+                'type': elevation_df.loc[elevation_idx, 'type']
+            }
+
+    # Most activities in a week
+    if 'start_date' in df.columns:
+        df_copy = df.copy()
+        df_copy['week'] = df_copy['start_date'].dt.isocalendar().week
+        df_copy['year'] = df_copy['start_date'].dt.year
+        weekly_counts = df_copy.groupby(['year', 'week']).size()
+        if not weekly_counts.empty:
+            max_week = weekly_counts.idxmax()
+            records['most_weekly_activities'] = {
+                'value': int(weekly_counts.max()),
+                'week': f"Week {max_week[1]}, {max_week[0]}"
+            }
+
+    return records if records else None
+
+def get_weekly_progress(df):
+    """Calculate current week's progress"""
+    if df.empty or 'start_date' not in df.columns:
+        return None
+
+    # Get current week (Monday to Sunday)
+    today = datetime.now()
+    week_start = today - timedelta(days=today.weekday())
+    week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = week_start + timedelta(days=7)
+
+    # Ensure start_date is timezone-naive for comparison
+    df_copy = df.copy()
+    if pd.api.types.is_datetime64tz_dtype(df_copy['start_date']):
+        df_copy['start_date'] = df_copy['start_date'].dt.tz_localize(None)
+
+    # Filter to current week
+    df_week = df_copy[(df_copy['start_date'] >= week_start) & (df_copy['start_date'] < week_end)]
+
+    if df_week.empty:
+        return {
+            'current_distance': 0,
+            'current_activities': 0,
+            'week_start': week_start.strftime('%b %d'),
+            'week_end': (week_end - timedelta(days=1)).strftime('%b %d')
+        }
+
+    return {
+        'current_distance': round(df_week['distance_km'].sum(), 1),
+        'current_activities': len(df_week),
+        'week_start': week_start.strftime('%b %d'),
+        'week_end': (week_end - timedelta(days=1)).strftime('%b %d')
+    }
+
+def get_club_comparison(user_id):
+    """Compare user stats with club averages"""
+    try:
+        conn = sqlite3.connect('strava_activities.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Get user's total distance
+        cursor.execute("""
+            SELECT SUM(distance) as total_distance, COUNT(*) as activity_count
+            FROM activities
+            WHERE user_id = ? AND type IN ('Walk', 'Hike', 'Run', 'Ride')
+        """, (user_id,))
+        user_stats = cursor.fetchone()
+
+        # Get club averages (excluding private users)
+        cursor.execute("""
+            SELECT
+                AVG(total_distance) as avg_distance,
+                AVG(activity_count) as avg_activities
+            FROM (
+                SELECT
+                    a.user_id,
+                    SUM(a.distance) as total_distance,
+                    COUNT(*) as activity_count
+                FROM activities a
+                INNER JOIN users u ON a.user_id = u.id
+                WHERE u.is_active = 1
+                  AND u.privacy_level != 'private'
+                  AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
+                GROUP BY a.user_id
+            )
+        """)
+        club_stats = cursor.fetchone()
+
+        conn.close()
+
+        if user_stats and club_stats and club_stats['avg_distance']:
+            user_distance = user_stats['total_distance'] / 1000 if user_stats['total_distance'] else 0
+            avg_distance = club_stats['avg_distance'] / 1000 if club_stats['avg_distance'] else 1
+
+            return {
+                'user_distance': round(user_distance, 1),
+                'club_avg_distance': round(avg_distance, 1),
+                'user_activities': user_stats['activity_count'],
+                'club_avg_activities': round(club_stats['avg_activities'], 1) if club_stats['avg_activities'] else 0,
+                'distance_percentile': round((user_distance / avg_distance) * 100, 0) if avg_distance > 0 else 100
+            }
+    except Exception as e:
+        logger.error(f"Error calculating club comparison: {e}")
+        return None
 
 @app.on_event('startup')
 def startup_event():
@@ -206,7 +446,7 @@ def startup_event():
 # ============================================================================
 
 @app.get("/auth/login")
-async def auth_login(response: Response):
+async def auth_login(request: Request):
     """
     Initiate OAuth login with Strava
     Redirects to Strava authorization page
@@ -214,20 +454,13 @@ async def auth_login(response: Response):
     # Generate state for CSRF protection
     state = generate_oauth_state()
 
-    # Store state in cookie for verification
-    response = RedirectResponse(url=STRAVA_AUTHORIZE_URL)
-    response.set_cookie(
-        key='oauth_state',
-        value=state,
-        max_age=600,  # 10 minutes
-        httponly=True,
-        samesite='lax'
-    )
+    # Get dynamic redirect URI based on request host
+    redirect_uri = get_oauth_redirect_uri(request)
 
-    # Build authorization URL
+    # Build authorization URL with dynamic redirect URI
     params = {
         'client_id': CLIENT_ID,
-        'redirect_uri': OAUTH_REDIRECT_URI,
+        'redirect_uri': redirect_uri,
         'response_type': 'code',
         'approval_prompt': 'auto',
         'scope': 'read,activity:read_all',
@@ -236,7 +469,17 @@ async def auth_login(response: Response):
 
     auth_url = f"{STRAVA_AUTHORIZE_URL}?{urlencode(params)}"
 
-    return RedirectResponse(url=auth_url)
+    # Create redirect response and set state cookie
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie(
+        key='oauth_state',
+        value=state,
+        max_age=600,  # 10 minutes
+        httponly=True,
+        samesite='lax'
+    )
+
+    return response
 
 
 @app.get("/auth/callback")
@@ -363,6 +606,42 @@ async def update_privacy(request: Request, user: dict = Depends(get_current_user
     return RedirectResponse(url="/settings?updated=true", status_code=303)
 
 
+@app.post("/sync")
+async def manual_sync(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Manual sync endpoint - triggers immediate activity sync for current user
+
+    Returns:
+        Redirects back to dashboard with sync status
+    """
+    user_id = user['id']
+    logger.info(f"Manual sync triggered by user {user_id} ({user['firstname']})")
+
+    try:
+        # Trigger sync for this user
+        new_count, error = sync_user_activities(user_id)
+
+        if error:
+            logger.error(f"Manual sync failed for user {user_id}: {error}")
+            return RedirectResponse(
+                url=f"/dashboard?sync_error={error}",
+                status_code=303
+            )
+
+        logger.info(f"Manual sync completed for user {user_id}: {new_count} new activities")
+        return RedirectResponse(
+            url=f"/dashboard?sync_success={new_count}",
+            status_code=303
+        )
+
+    except Exception as e:
+        logger.error(f"Manual sync exception for user {user_id}: {e}")
+        return RedirectResponse(
+            url=f"/dashboard?sync_error=Unexpected error during sync",
+            status_code=303
+        )
+
+
 # ============================================================================
 # Main Application Routes
 # ============================================================================
@@ -380,36 +659,37 @@ async def index(request: Request):
         # Already logged in, redirect to dashboard
         return RedirectResponse(url="/dashboard")
 
-    # Show landing page with optional club stats
+    # Show landing page with optional club stats from database
+    # Only show stats from users with 'public' privacy level
     club_stats = None
-    if CLUB_ID:
-        try:
-            # Fetch basic club stats for landing page
-            token = get_access_token()
-            club_activities = get_club_activities(token, CLUB_ID, per_page=100)
+    try:
+        conn = sqlite3.connect('strava_activities.db')
+        cursor = conn.cursor()
 
-            if club_activities:
-                import pandas as pd
-                df = pd.DataFrame(club_activities)
+        # Get stats from public users only
+        cursor.execute("""
+            SELECT
+                COUNT(DISTINCT a.id) as total_activities,
+                SUM(a.distance) as total_distance,
+                COUNT(DISTINCT a.user_id) as athlete_count
+            FROM activities a
+            INNER JOIN users u ON a.user_id = u.id
+            WHERE u.is_active = 1
+              AND u.privacy_level = 'public'
+              AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
+        """)
 
-                # Extract athlete names
-                if 'athlete' in df.columns:
-                    df['athlete.firstname'] = df['athlete'].apply(
-                        lambda x: x.get('firstname', 'Unknown') if isinstance(x, dict) else 'Unknown'
-                    )
+        row = cursor.fetchone()
+        conn.close()
 
-                # Filter to relevant types
-                if 'type' in df.columns:
-                    df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
-
-                if not df.empty:
-                    club_stats = {
-                        'total_activities': len(df),
-                        'total_distance_km': df['distance'].sum() / 1000 if 'distance' in df.columns else 0,
-                        'athlete_count': len(df['athlete.firstname'].unique()) if 'athlete.firstname' in df.columns else 0
-                    }
-        except Exception:
-            pass  # Ignore errors loading club stats for landing page
+        if row and row[0] > 0:
+            club_stats = {
+                'total_activities': row[0],
+                'total_distance_km': (row[1] / 1000) if row[1] else 0,
+                'athlete_count': row[2]
+            }
+    except Exception:
+        pass  # Ignore errors loading club stats for landing page
 
     return templates.TemplateResponse("landing.html", {
         "request": request,
@@ -422,75 +702,52 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
     """
     Personal dashboard - requires authentication
     Shows user's personal activity statistics and charts
+
+    Note: Activities are synced in the background every 15 minutes.
+    This route now only reads from the database for better performance.
     """
-    # Refresh user's access token if needed
-    user = refresh_user_token(user)
     user_id = user['id']
 
-    # Use user's access token instead of global refresh token
-    token = user['access_token']
-    # Get latest activity in DB
+    # Get all activities from database (background sync keeps this updated)
     conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
     c = conn.cursor()
 
-    # Check if using multi-user schema
-    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-    has_multiuser = c.fetchone() is not None
+    c.execute("""
+        SELECT * FROM activities
+        WHERE user_id = ?
+        ORDER BY start_date DESC
+    """, (user_id,))
 
-    if has_multiuser:
-        c.execute('SELECT MAX(start_date) FROM activities WHERE user_id = ?', (user_id,))
-    else:
-        c.execute('SELECT MAX(start_date) FROM activities')
-
-    last_date = c.fetchone()[0]
+    rows = c.fetchall()
     conn.close()
 
-    # Download new activities only
-    activities = []
-    page = 1
-    while True:
-        acts = get_activities(token, per_page=200, pages=1)
-        if not acts:
-            break
-        # If last_date is set, filter out already downloaded
-        if last_date:
-            acts = [a for a in acts if a['start_date'] > last_date]
-        if not acts:
-            break
-        activities.extend(acts)
-        if len(acts) < 200:
-            break
-        page += 1
-    # Save new and get all
-    df = save_and_get_activities(activities, user_id=user_id)
+    # Convert to DataFrame
+    if rows:
+        df = pd.DataFrame([dict(row) for row in rows])
+    else:
+        df = pd.DataFrame()
     if df.empty:
-        debug_html = f"""
-        <h2>No activities found or Strava API error.</h2>
-        <h3>Debug Info:</h3>
-        <ul>
-            <li>Token: {'Set' if token else 'NOT SET'}</li>
-            <li>Activities fetched: {len(activities)}</li>
-            <li>CLIENT_ID: {'Set' if CLIENT_ID else 'NOT SET'}</li>
-            <li>CLIENT_SECRET: {'Set' if CLIENT_SECRET else 'NOT SET'}</li>
-            <li>REFRESH_TOKEN: {'Set' if REFRESH_TOKEN else 'NOT SET'}</li>
-        </ul>
-        <pre>Sample activities: {activities[:2] if activities else 'None'}</pre>
-        """
-        return HTMLResponse(debug_html)
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_title": "No Activities Found",
+            "error_message": "You don't have any activities yet. Activities are automatically synced from Strava every 15 minutes. If you just connected your account, please wait a few minutes for the initial sync to complete, or use the manual sync button below."
+        })
     
-    # Process data
-    df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
+    # Process data - filter for tracked activity types
+    df = df[df['type'].isin(['Walk', 'Hike', 'Run', 'Ride'])]
     df['start_date'] = pd.to_datetime(df['start_date'])
     df['distance_km'] = df['distance'] / 1000
     df['month'] = df['start_date'].dt.to_period('M').dt.to_timestamp()
-    
+
     # Get statistics
     stats = get_activity_stats(df)
-    
+
     # Get recent activities by type
     recent_walks = get_recent_activities_by_type(df, 'Walk')
     recent_hikes = get_recent_activities_by_type(df, 'Hike')
     recent_runs = get_recent_activities_by_type(df, 'Run')
+    recent_rides = get_recent_activities_by_type(df, 'Ride')
     
     # Create monthly grouping for charts
     grouped = df.groupby(['month', 'type'])['distance_km'].sum().unstack(fill_value=0)
@@ -515,9 +772,9 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
 
     # Generate individual charts
     activity_charts = {}
-    colors = {'Walk': '#4CAF50', 'Hike': '#FF9800', 'Run': '#2196F3'}
-    
-    for activity in ['Walk', 'Hike', 'Run']:
+    colors = {'Walk': '#4CAF50', 'Hike': '#FF9800', 'Run': '#2196F3', 'Ride': '#9C27B0'}
+
+    for activity in ['Walk', 'Hike', 'Run', 'Ride']:
         if activity in grouped.columns and not grouped[activity].empty:
             plt.figure(figsize=(10,5))
             ax = grouped[activity].plot(kind='bar', color=colors[activity], ax=plt.gca())
@@ -543,7 +800,12 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
         activities = activities_df.copy()
         activities['start_date_str'] = activities['start_date'].dt.strftime('%Y-%m-%d')
         return activities.to_dict('records')
-    
+
+    # Calculate personal records, weekly progress, and club comparison
+    personal_records = get_personal_records(df)
+    weekly_progress = get_weekly_progress(df)
+    club_comparison = get_club_comparison(user_id)
+
     context = {
         "request": request,
         "user": user,  # Add authenticated user information
@@ -551,9 +813,14 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
         "walk_chart": activity_charts.get('Walk'),
         "hike_chart": activity_charts.get('Hike'),
         "run_chart": activity_charts.get('Run'),
+        "ride_chart": activity_charts.get('Ride'),
         "recent_walks": format_activities_for_template(recent_walks),
         "recent_hikes": format_activities_for_template(recent_hikes),
         "recent_runs": format_activities_for_template(recent_runs),
+        "recent_rides": format_activities_for_template(recent_rides),
+        "personal_records": personal_records,
+        "weekly_progress": weekly_progress,
+        "club_comparison": club_comparison,
         **stats
     }
 
@@ -564,46 +831,75 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
     """
     Display club-wide activity dashboard.
     Shows aggregated statistics and recent activities from all club members.
-    Requires authentication.
+    Requires authentication and respects privacy settings.
     """
     if not CLUB_ID:
         return HTMLResponse("<h2>Club ID not configured</h2><p>Please set STRAVA_CLUB_ID in your .env file</p>")
 
     # Refresh user's token if needed
     user = refresh_user_token(user)
-    token = user['access_token']
 
     try:
-        # Fetch club activities (limited data from API)
-        club_activities = get_club_activities(token, CLUB_ID)
+        # Query database for club members' activities (respecting privacy)
+        conn = sqlite3.connect('strava_activities.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
 
-        if not club_activities:
+        # Get activities from all users who are NOT private
+        # Since all viewers are authenticated club members, we show 'public' and 'club_only'
+        cursor.execute("""
+            SELECT
+                a.*,
+                u.firstname,
+                u.lastname,
+                u.profile_picture
+            FROM activities a
+            INNER JOIN users u ON a.user_id = u.id
+            WHERE u.is_active = 1
+              AND u.privacy_level != 'private'
+              AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
+            ORDER BY a.start_date DESC
+        """)
+
+        activities_rows = cursor.fetchall()
+        conn.close()
+
+        if not activities_rows:
             return HTMLResponse(f"""
                 <h2>No club activities found</h2>
                 <p>Club ID: {CLUB_ID}</p>
-                <p>Make sure you're a member of this club and it has recent activities.</p>
+                <p>No authenticated club members have shared their activities yet.</p>
+                <p>Make sure club members have logged in and set their privacy to "Club Only" or "Public".</p>
             """)
 
         # Convert to DataFrame for analysis
-        df = pd.DataFrame(club_activities)
+        activities_data = []
+        for row in activities_rows:
+            activity_dict = dict(row)
+            # Add distance_km for consistency
+            activity_dict['distance_km'] = activity_dict['distance'] / 1000 if activity_dict.get('distance') else 0
+            # Format athlete name
+            activity_dict['athlete.firstname'] = f"{activity_dict['firstname']} {activity_dict['lastname'][0]}." if activity_dict.get('lastname') else activity_dict.get('firstname', 'Unknown')
+            activities_data.append(activity_dict)
 
-        # Extract athlete firstname from nested dict
-        if 'athlete' in df.columns:
-            df['athlete.firstname'] = df['athlete'].apply(lambda x: x.get('firstname', 'Unknown') if isinstance(x, dict) else 'Unknown')
-
-        # Filter for Walk/Hike/Run activities if type field exists
-        if 'type' in df.columns:
-            df = df[df['type'].isin(['Walk', 'Hike', 'Run'])]
+        df = pd.DataFrame(activities_data)
 
         if df.empty:
             return HTMLResponse(f"""
-                <h2>No Walk/Hike/Run activities found</h2>
-                <p>Club has activities but none are Walk, Hike, or Run types.</p>
+                <h2>No Walk/Hike/Run/Ride activities found</h2>
+                <p>Club members haven't shared any activities yet.</p>
             """)
 
         # Calculate statistics
         total_activities = len(df)
         total_distance_km = df['distance'].sum() / 1000 if 'distance' in df.columns else 0
+
+        # Calculate total duration in hours
+        total_duration_hours = 0
+        if 'moving_time' in df.columns:
+            total_duration_hours = round(df['moving_time'].sum() / 3600, 1)
+        elif 'elapsed_time' in df.columns:
+            total_duration_hours = round(df['elapsed_time'].sum() / 3600, 1)
 
         # Get athlete counts (names are limited to "FirstName L." format)
         athlete_names = df['athlete.firstname'].unique() if 'athlete.firstname' in df.columns else []
@@ -611,6 +907,12 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
 
         # Activity type breakdown
         type_counts = df['type'].value_counts().to_dict() if 'type' in df.columns else {}
+
+        # Individual activity type counts
+        walk_count = len(df[df['type'] == 'Walk']) if 'type' in df.columns else 0
+        hike_count = len(df[df['type'] == 'Hike']) if 'type' in df.columns else 0
+        run_count = len(df[df['type'] == 'Run']) if 'type' in df.columns else 0
+        ride_count = len(df[df['type'] == 'Ride']) if 'type' in df.columns else 0
 
         # Aggregate by athlete for leaderboard
         if 'athlete.firstname' in df.columns and 'distance' in df.columns:
@@ -626,21 +928,19 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
 
         # Calculate weekly leaderboard (current week)
         weekly_leaderboard_data = []
-        if 'athlete.firstname' in df.columns and 'distance' in df.columns:
+        if 'athlete.firstname' in df.columns and 'distance' in df.columns and 'start_date' in df.columns:
             # Get current week boundaries (Monday to Sunday)
             today = datetime.now()
             week_start = today - timedelta(days=today.weekday())  # Monday
             week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_end = week_start + timedelta(days=7)
 
-            # Try to filter by date if available in the data
-            # The club API may have limited date info, so we'll work with what's available
-            df_week = df.copy()
+            # Convert start_date to datetime for filtering
+            df['start_date_dt'] = pd.to_datetime(df['start_date'], errors='coerce', utc=True)
+            df['start_date_dt'] = df['start_date_dt'].dt.tz_localize(None)  # Remove timezone for comparison
 
-            # Check if there's any date field we can use
-            # Common fields: 'start_date', 'start_date_local', or activities might be ordered by recency
-            # Since API has limitations, we'll use the first 50 activities as a proxy for "recent/this week"
-            # as the API returns activities in reverse chronological order
-            df_week = df.head(50)  # Most recent activities as proxy for current week
+            # Filter to current week
+            df_week = df[(df['start_date_dt'] >= week_start) & (df['start_date_dt'] < week_end)]
 
             if not df_week.empty and 'athlete.firstname' in df_week.columns:
                 weekly_leaderboard = df_week.groupby('athlete.firstname').agg({
@@ -695,15 +995,26 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
         # Recent activities (limited to 20)
         recent_activities = df.head(20).to_dict('records') if not df.empty else []
 
+        # Get trophy leaderboard and recent winners
+        trophy_leaderboard = get_trophy_leaderboard()
+        recent_trophy_winners = get_recent_trophy_winners(limit=5)
+
         context = {
             "request": request,
             "user": user,  # Add authenticated user information
             "club_id": CLUB_ID,
             "total_activities": total_activities,
             "total_distance_km": round(total_distance_km, 2),
+            "total_duration_hours": total_duration_hours,
             "athlete_count": athlete_count,
+            "walk_count": walk_count,
+            "hike_count": hike_count,
+            "run_count": run_count,
+            "ride_count": ride_count,
             "leaderboard": leaderboard_data[:10],  # Top 10
             "weekly_leaderboard": weekly_leaderboard_data[:10],  # Top 10 for the week
+            "trophy_leaderboard": trophy_leaderboard,  # All-time trophy winners
+            "recent_trophy_winners": recent_trophy_winners,  # Recent 5 weeks
             "leaderboard_chart": leaderboard_chart,
             "type_chart": type_chart,
             "type_counts": type_counts,

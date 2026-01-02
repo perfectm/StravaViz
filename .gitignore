@@ -63,3 +63,14 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+# Server runtime files
+*.pid
+server.pid
+
+# Database backups
+*.backup
+*.db.backup_*
+
+# Database files
+strava_activities.db
+strava_multiuser.db

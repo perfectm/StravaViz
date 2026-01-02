@@ -5,7 +5,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$SCRIPT_DIR/server.pid"
 LOG_FILE="$SCRIPT_DIR/server.log"
-PORT=8001
+PORT=8002
 
 echo "📊 Strava Dashboard Server Status"
 echo "================================="

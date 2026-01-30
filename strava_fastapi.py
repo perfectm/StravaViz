@@ -525,6 +525,108 @@ def generate_hr_zone_chart(weekly_data):
     return base64.b64encode(buf.read()).decode('utf-8')
 
 
+def get_daily_hr_zones(user_id):
+    """
+    Get heart rate zone data for each day of the current week (Mon-Sun).
+
+    Returns:
+        Dict with 'week_start', 'week_end', and 'days' (list of 7 day dicts),
+        or None if no HR zone data exists.
+    """
+    try:
+        conn = sqlite3.connect('strava_activities.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='activity_hr_zones'")
+        if not cursor.fetchone():
+            conn.close()
+            return None
+
+        today = datetime.now()
+        monday = today - timedelta(days=today.weekday())
+        monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        sunday = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+
+        cursor.execute("""
+            SELECT
+                date(a.start_date) as activity_date,
+                SUM(z.zone_1_seconds) as zone_1,
+                SUM(z.zone_2_seconds) as zone_2,
+                SUM(z.zone_3_seconds) as zone_3,
+                SUM(z.zone_4_seconds) as zone_4,
+                SUM(z.zone_5_seconds) as zone_5,
+                SUM(z.zone_1_seconds + z.zone_2_seconds + z.zone_3_seconds + z.zone_4_seconds + z.zone_5_seconds) as total
+            FROM activity_hr_zones z
+            INNER JOIN activities a ON z.user_id = a.user_id AND z.activity_id = a.activity_id
+            WHERE z.user_id = ?
+              AND date(a.start_date) >= date(?)
+              AND date(a.start_date) <= date(?)
+            GROUP BY activity_date
+            ORDER BY activity_date ASC
+        """, (user_id, monday.strftime('%Y-%m-%d'), sunday.strftime('%Y-%m-%d')))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Build a lookup by date string
+        date_data = {}
+        for row in rows:
+            date_data[row['activity_date']] = {
+                'zone_1_mins': round(row['zone_1'] / 60, 1),
+                'zone_2_mins': round(row['zone_2'] / 60, 1),
+                'zone_3_mins': round(row['zone_3'] / 60, 1),
+                'zone_4_mins': round(row['zone_4'] / 60, 1),
+                'zone_5_mins': round(row['zone_5'] / 60, 1),
+                'total_mins': round(row['total'] / 60, 1),
+            }
+
+        day_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        days = []
+        week_total = {'zone_1_mins': 0, 'zone_2_mins': 0, 'zone_3_mins': 0,
+                      'zone_4_mins': 0, 'zone_5_mins': 0, 'total_mins': 0}
+        for i in range(7):
+            day_date = monday + timedelta(days=i)
+            date_str = day_date.strftime('%Y-%m-%d')
+            data = date_data.get(date_str)
+            is_today = day_date.date() == today.date()
+            is_future = day_date.date() > today.date()
+            day = {
+                'name': day_names[i],
+                'date': day_date.strftime('%b %d'),
+                'is_today': is_today,
+                'is_future': is_future,
+                'has_data': data is not None,
+            }
+            if data:
+                day.update(data)
+                for k in week_total:
+                    week_total[k] += data[k]
+            else:
+                day.update({'zone_1_mins': 0, 'zone_2_mins': 0, 'zone_3_mins': 0,
+                            'zone_4_mins': 0, 'zone_5_mins': 0, 'total_mins': 0})
+            days.append(day)
+
+        # Round accumulated totals
+        for k in week_total:
+            week_total[k] = round(week_total[k], 1)
+
+        has_any_data = any(d['has_data'] for d in days)
+        if not has_any_data:
+            return None
+
+        return {
+            'week_start': monday.strftime('%b %d'),
+            'week_end': sunday.strftime('%b %d'),
+            'days': days,
+            'week_total': week_total,
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting daily HR zones: {e}")
+        return None
+
+
 def get_club_comparison(user_id):
     """Compare user stats with club averages"""
     try:
@@ -976,6 +1078,7 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
     # Get HR zone data
     weekly_hr_zones = get_weekly_hr_zones(user_id)
     hr_zone_chart = generate_hr_zone_chart(weekly_hr_zones)
+    daily_hr_zones = get_daily_hr_zones(user_id)
 
     context = {
         "request": request,
@@ -994,6 +1097,7 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
         "club_comparison": club_comparison,
         "hr_zone_chart": hr_zone_chart,
         "weekly_hr_zones": weekly_hr_zones,
+        "daily_hr_zones": daily_hr_zones,
         **stats
     }
 

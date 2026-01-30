@@ -267,10 +267,212 @@
                 </div>
             </section>
 
+            {% if daily_hr_zones %}
+            <section class="section">
+                <h2>Heart Rate Zones — This Week</h2>
+                <p style="color: #666; margin-bottom: 1.5rem;">{{ daily_hr_zones.week_start }} – {{ daily_hr_zones.week_end }} &middot; Daily time in each HR zone (minutes)</p>
+
+                <style>
+                    .hr-daily-grid {
+                        display: grid;
+                        grid-template-columns: repeat(7, 1fr);
+                        gap: 10px;
+                        margin-bottom: 1.5rem;
+                    }
+                    .hr-day-card {
+                        background: #fafafa;
+                        border-radius: 10px;
+                        padding: 12px 8px;
+                        text-align: center;
+                        border: 2px solid transparent;
+                        transition: border-color 0.2s;
+                    }
+                    .hr-day-card.is-today {
+                        border-color: #fc4c02;
+                        background: #fff8f5;
+                    }
+                    .hr-day-card.is-future {
+                        opacity: 0.45;
+                    }
+                    .hr-day-card.no-data .hr-bar-stack {
+                        opacity: 0.15;
+                    }
+                    .hr-day-header {
+                        font-weight: 700;
+                        font-size: 0.85em;
+                        color: #555;
+                        margin-bottom: 2px;
+                    }
+                    .hr-day-date {
+                        font-size: 0.75em;
+                        color: #999;
+                        margin-bottom: 10px;
+                    }
+                    .hr-bar-stack {
+                        display: flex;
+                        flex-direction: column-reverse;
+                        align-items: center;
+                        height: 140px;
+                        justify-content: flex-start;
+                        gap: 1px;
+                    }
+                    .hr-bar-segment {
+                        width: 36px;
+                        border-radius: 3px;
+                        min-height: 0;
+                        transition: height 0.3s;
+                    }
+                    .hr-day-total {
+                        margin-top: 8px;
+                        font-size: 0.85em;
+                        font-weight: 700;
+                        color: #333;
+                    }
+                    .hr-day-total.empty {
+                        color: #ccc;
+                    }
+                    .hr-zone-legend {
+                        display: flex;
+                        justify-content: center;
+                        gap: 18px;
+                        flex-wrap: wrap;
+                        margin-bottom: 1rem;
+                    }
+                    .hr-zone-legend-item {
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                        font-size: 0.8em;
+                        color: #555;
+                    }
+                    .hr-zone-legend-dot {
+                        width: 12px;
+                        height: 12px;
+                        border-radius: 3px;
+                    }
+                    .hr-week-summary {
+                        display: flex;
+                        justify-content: center;
+                        gap: 24px;
+                        flex-wrap: wrap;
+                        background: #f8f9fa;
+                        border-radius: 10px;
+                        padding: 14px 20px;
+                    }
+                    .hr-week-summary-item {
+                        text-align: center;
+                    }
+                    .hr-week-summary-item .val {
+                        font-size: 1.15em;
+                        font-weight: 700;
+                    }
+                    .hr-week-summary-item .lbl {
+                        font-size: 0.75em;
+                        color: #777;
+                        margin-top: 2px;
+                    }
+                    @media (max-width: 768px) {
+                        .hr-daily-grid {
+                            grid-template-columns: repeat(4, 1fr);
+                        }
+                    }
+                    @media (max-width: 480px) {
+                        .hr-daily-grid {
+                            grid-template-columns: repeat(3, 1fr);
+                        }
+                    }
+                </style>
+
+                <div class="hr-zone-legend">
+                    <div class="hr-zone-legend-item"><span class="hr-zone-legend-dot" style="background:#9E9E9E"></span> Z1 Recovery</div>
+                    <div class="hr-zone-legend-item"><span class="hr-zone-legend-dot" style="background:#2196F3"></span> Z2 Endurance</div>
+                    <div class="hr-zone-legend-item"><span class="hr-zone-legend-dot" style="background:#4CAF50"></span> Z3 Tempo</div>
+                    <div class="hr-zone-legend-item"><span class="hr-zone-legend-dot" style="background:#FF9800"></span> Z4 Threshold</div>
+                    <div class="hr-zone-legend-item"><span class="hr-zone-legend-dot" style="background:#F44336"></span> Z5 VO2 Max</div>
+                </div>
+
+                <div class="hr-daily-grid">
+                    {% for day in daily_hr_zones.days %}
+                    <div class="hr-day-card {{ 'is-today' if day.is_today }}{{ ' is-future' if day.is_future }}{{ ' no-data' if not day.has_data }}">
+                        <div class="hr-day-header">{{ day.name }}</div>
+                        <div class="hr-day-date">{{ day.date }}</div>
+                        <div class="hr-bar-stack" data-total="{{ day.total_mins }}"
+                             data-z1="{{ day.zone_1_mins }}" data-z2="{{ day.zone_2_mins }}"
+                             data-z3="{{ day.zone_3_mins }}" data-z4="{{ day.zone_4_mins }}"
+                             data-z5="{{ day.zone_5_mins }}">
+                        </div>
+                        <div class="hr-day-total {{ 'empty' if not day.has_data }}">
+                            {% if day.has_data %}{{ day.total_mins }}m{% else %}—{% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="hr-week-summary">
+                    <div class="hr-week-summary-item">
+                        <div class="val">{{ daily_hr_zones.week_total.total_mins }}</div>
+                        <div class="lbl">Total min</div>
+                    </div>
+                    <div class="hr-week-summary-item">
+                        <div class="val" style="color:#9E9E9E">{{ daily_hr_zones.week_total.zone_1_mins }}</div>
+                        <div class="lbl">Z1</div>
+                    </div>
+                    <div class="hr-week-summary-item">
+                        <div class="val" style="color:#2196F3">{{ daily_hr_zones.week_total.zone_2_mins }}</div>
+                        <div class="lbl">Z2</div>
+                    </div>
+                    <div class="hr-week-summary-item">
+                        <div class="val" style="color:#4CAF50">{{ daily_hr_zones.week_total.zone_3_mins }}</div>
+                        <div class="lbl">Z3</div>
+                    </div>
+                    <div class="hr-week-summary-item">
+                        <div class="val" style="color:#FF9800">{{ daily_hr_zones.week_total.zone_4_mins }}</div>
+                        <div class="lbl">Z4</div>
+                    </div>
+                    <div class="hr-week-summary-item">
+                        <div class="val" style="color:#F44336">{{ daily_hr_zones.week_total.zone_5_mins }}</div>
+                        <div class="lbl">Z5</div>
+                    </div>
+                </div>
+
+                <script>
+                (function() {
+                    const stacks = document.querySelectorAll('.hr-bar-stack');
+                    const colors = ['#9E9E9E', '#2196F3', '#4CAF50', '#FF9800', '#F44336'];
+                    const zoneKeys = ['z1', 'z2', 'z3', 'z4', 'z5'];
+                    const maxHeight = 140;
+
+                    // Find max total across all days for scaling
+                    let maxTotal = 0;
+                    stacks.forEach(s => {
+                        const t = parseFloat(s.dataset.total) || 0;
+                        if (t > maxTotal) maxTotal = t;
+                    });
+                    if (maxTotal === 0) maxTotal = 1;
+
+                    stacks.forEach(stack => {
+                        const total = parseFloat(stack.dataset.total) || 0;
+                        zoneKeys.forEach((key, i) => {
+                            const mins = parseFloat(stack.dataset[key]) || 0;
+                            const seg = document.createElement('div');
+                            seg.className = 'hr-bar-segment';
+                            seg.style.background = colors[i];
+                            // Scale height relative to max day
+                            const h = total > 0 ? (mins / maxTotal) * maxHeight : 0;
+                            seg.style.height = Math.max(h, mins > 0 ? 2 : 0) + 'px';
+                            seg.title = 'Z' + (i + 1) + ': ' + mins + ' min';
+                            stack.appendChild(seg);
+                        });
+                    });
+                })();
+                </script>
+            </section>
+            {% endif %}
+
             {% if hr_zone_chart %}
             <section class="section">
-                <h2>Heart Rate Zones</h2>
-                <p style="color: #666; margin-bottom: 1.5rem;">Weekly time in each HR zone across all activity types (last 8 weeks)</p>
+                <h2>Heart Rate Zones — 8-Week Trend</h2>
+                <p style="color: #666; margin-bottom: 1.5rem;">Weekly time in each HR zone across all activity types</p>
                 <div class="chart-container">
                     <img src="data:image/png;base64,{{ hr_zone_chart }}" alt="Heart Rate Zone Distribution"/>
                 </div>

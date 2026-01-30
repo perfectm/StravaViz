@@ -419,8 +419,7 @@ def get_weekly_hr_zones(user_id, num_weeks=8):
 
         cursor.execute("""
             SELECT
-                strftime('%Y-%W', a.start_date) as year_week,
-                MIN(date(a.start_date, 'weekday 1', '-7 days')) as week_start_date,
+                date(a.start_date, 'weekday 1', '-7 days') as week_start_date,
                 SUM(z.zone_1_seconds) as zone_1,
                 SUM(z.zone_2_seconds) as zone_2,
                 SUM(z.zone_3_seconds) as zone_3,
@@ -431,8 +430,8 @@ def get_weekly_hr_zones(user_id, num_weeks=8):
             INNER JOIN activities a ON z.user_id = a.user_id AND z.activity_id = a.activity_id
             WHERE z.user_id = ?
               AND a.start_date >= ?
-            GROUP BY year_week
-            ORDER BY year_week ASC
+            GROUP BY week_start_date
+            ORDER BY week_start_date ASC
         """, (user_id, range_start.isoformat()))
 
         rows = cursor.fetchall()

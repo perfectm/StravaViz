@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Training Log - Strava Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+        /* Header */
+        header {
+            background: linear-gradient(135deg, #fc4c02 0%, #e34402 100%);
+            color: white;
+            padding: 15px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo { font-size: 1.5em; font-weight: bold; }
+        nav ul {
+            list-style: none;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        nav a {
+            color: white;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+        nav a:hover { background: rgba(255,255,255,0.2); }
+        .user-profile {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .profile-pic {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 2px solid rgba(255,255,255,0.5);
+        }
+
+        /* Filter bar */
+        .filter-bar {
+            background: white;
+            padding: 16px 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-group label {
+            font-size: 0.85em;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .filter-group select, .filter-group button {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: #fafafa;
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+        .filter-group select:focus { outline: none; border-color: #fc4c02; }
+        .unit-toggle {
+            display: flex;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .unit-toggle button {
+            border: none;
+            border-radius: 0;
+            padding: 6px 14px;
+            background: #fafafa;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background 0.15s;
+        }
+        .unit-toggle button.active {
+            background: #fc4c02;
+            color: white;
+        }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            gap: 16px;
+            margin-left: auto;
+            flex-wrap: wrap;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85em;
+            color: #555;
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        /* Calendar grid */
+        .calendar-section { margin: 0 0 20px; }
+        .year-header {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #f5f5f5;
+            padding: 12px 0 8px;
+            font-size: 1.2em;
+            font-weight: 700;
+            color: #333;
+            border-bottom: 2px solid #ddd;
+        }
+        .day-labels {
+            display: grid;
+            grid-template-columns: 120px repeat(7, 1fr);
+            gap: 4px;
+            padding: 8px 0;
+            position: sticky;
+            top: 48px;
+            z-index: 9;
+            background: #f5f5f5;
+        }
+        .day-labels span {
+            text-align: center;
+            font-size: 0.8em;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+        }
+        .day-labels span:first-child { text-align: left; }
+
+        .week-row {
+            display: grid;
+            grid-template-columns: 120px repeat(7, 1fr);
+            gap: 4px;
+            min-height: 80px;
+            border-bottom: 1px solid #eee;
+            padding: 8px 0;
+        }
+        .week-info {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            font-size: 0.8em;
+            color: #777;
+            padding-right: 8px;
+        }
+        .week-info .week-dates { font-weight: 600; color: #555; }
+        .week-info .week-total { margin-top: 4px; color: #999; font-size: 0.9em; }
+
+        .day-cell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 0;
+            min-width: 0;
+        }
+
+        /* Activity circle */
+        .activity-bubble {
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 0.75em;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            flex-shrink: 0;
+            cursor: default;
+            transition: transform 0.15s;
+            position: relative;
+        }
+        .activity-bubble:hover { transform: scale(1.15); }
+        .activity-name {
+            font-size: 0.65em;
+            color: #888;
+            text-align: center;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Tooltip */
+        .activity-bubble .tooltip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85em;
+            font-weight: 400;
+            white-space: nowrap;
+            z-index: 20;
+            text-shadow: none;
+            pointer-events: none;
+        }
+        .activity-bubble:hover .tooltip { display: block; }
+
+        /* Load more */
+        .load-more-container {
+            text-align: center;
+            padding: 24px 0 40px;
+        }
+        .load-more-btn {
+            padding: 10px 28px;
+            background: #fc4c02;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .load-more-btn:hover { background: #e34402; }
+        .load-more-btn:disabled { background: #ccc; cursor: default; }
+
+        .no-activities {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            font-size: 1.1em;
+        }
+
+        @media (max-width: 768px) {
+            .header-content { flex-direction: column; gap: 10px; }
+            .filter-bar { flex-direction: column; align-items: flex-start; }
+            .legend { margin-left: 0; }
+            .day-labels, .week-row {
+                grid-template-columns: 60px repeat(7, 1fr);
+            }
+            .week-info { font-size: 0.7em; }
+            .activity-name { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Training Log</div>
+                <nav>
+                    <ul>
+                        <li><a href="/dashboard">My Dashboard</a></li>
+                        <li><a href="/club">Club View</a></li>
+                        <li><a href="/training-log">Training Log</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">&#128100;</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <div class="filter-bar">
+                <div class="filter-group">
+                    <label>Type</label>
+                    <select id="typeFilter">
+                        <option value="all">All Types</option>
+                        {% for t in activity_types %}
+                        <option value="{{ t }}">{{ t }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Metric</label>
+                    <select id="metricFilter">
+                        <option value="distance">Distance</option>
+                        <option value="time">Time</option>
+                        <option value="elevation">Elevation</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Units</label>
+                    <div class="unit-toggle">
+                        <button id="unitMi" class="active" onclick="setUnit('imperial')">Miles</button>
+                        <button id="unitKm" onclick="setUnit('metric')">Km</button>
+                    </div>
+                </div>
+                <div class="legend">
+                    <div class="legend-item"><span class="legend-dot" style="background:#4CAF50"></span> Walk</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#FF9800"></span> Hike</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#2196F3"></span> Run</div>
+                    <div class="legend-item"><span class="legend-dot" style="background:#9C27B0"></span> Ride</div>
+                </div>
+            </div>
+
+            <div id="calendar"></div>
+
+            <div class="load-more-container">
+                <button id="loadMoreBtn" class="load-more-btn" onclick="loadMore()">Load More Weeks</button>
+            </div>
+        </div>
+    </main>
+
+    <script>
+    const ACTIVITIES = {{ activities_json | safe }};
+    const TYPE_COLORS = {
+        'Walk': '#4CAF50',
+        'Hike': '#FF9800',
+        'Run': '#2196F3',
+        'Ride': '#9C27B0',
+    };
+    const FALLBACK_COLOR = '#607D8B';
+    const WEEKS_PER_PAGE = 12;
+
+    let currentUnit = 'imperial';
+    let currentWeekOffset = 0;
+    let allWeeks = [];
+
+    function setUnit(unit) {
+        currentUnit = unit;
+        document.getElementById('unitMi').classList.toggle('active', unit === 'imperial');
+        document.getElementById('unitKm').classList.toggle('active', unit === 'metric');
+        render();
+    }
+
+    // Get Monday of ISO week for a given date
+    function getMonday(d) {
+        const date = new Date(d);
+        const day = date.getDay();
+        const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+        return new Date(date.getFullYear(), date.getMonth(), diff);
+    }
+
+    function formatDate(d) {
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return months[d.getMonth()] + ' ' + d.getDate();
+    }
+
+    function getMetricValue(a) {
+        const metric = document.getElementById('metricFilter').value;
+        if (metric === 'distance') {
+            return currentUnit === 'imperial' ? a.distance_miles : a.distance_km;
+        } else if (metric === 'time') {
+            return a.moving_time_minutes;
+        } else {
+            return currentUnit === 'imperial' ? a.elevation_gain_ft : a.elevation_gain_m;
+        }
+    }
+
+    function getMetricLabel(a) {
+        const metric = document.getElementById('metricFilter').value;
+        const val = getMetricValue(a);
+        if (metric === 'distance') {
+            return val.toFixed(1) + (currentUnit === 'imperial' ? ' mi' : ' km');
+        } else if (metric === 'time') {
+            return val.toFixed(0) + 'm';
+        } else {
+            return val.toFixed(0) + (currentUnit === 'imperial' ? ' ft' : ' m');
+        }
+    }
+
+    function getMetricUnit() {
+        const metric = document.getElementById('metricFilter').value;
+        if (metric === 'distance') return currentUnit === 'imperial' ? 'mi' : 'km';
+        if (metric === 'time') return 'min';
+        return currentUnit === 'imperial' ? 'ft' : 'm';
+    }
+
+    function groupByWeek(activities) {
+        const weekMap = {};
+        activities.forEach(a => {
+            const d = new Date(a.start_date);
+            const mon = getMonday(d);
+            const key = mon.toISOString().slice(0, 10);
+            if (!weekMap[key]) {
+                weekMap[key] = { monday: mon, days: [[], [], [], [], [], [], []] };
+            }
+            // day index: 0=Mon, 6=Sun
+            let dayIdx = d.getDay() - 1;
+            if (dayIdx < 0) dayIdx = 6;
+            weekMap[key].days[dayIdx].push(a);
+        });
+        // Sort weeks descending
+        return Object.values(weekMap).sort((a, b) => b.monday - a.monday);
+    }
+
+    function computeBubbleSize(value, maxValue) {
+        const MIN = 32, MAX = 72;
+        if (!maxValue || maxValue === 0) return MIN;
+        const ratio = Math.min(value / maxValue, 1);
+        return MIN + (MAX - MIN) * Math.sqrt(ratio);
+    }
+
+    function render() {
+        const typeFilter = document.getElementById('typeFilter').value;
+        let filtered = ACTIVITIES;
+        if (typeFilter !== 'all') {
+            filtered = filtered.filter(a => a.type === typeFilter);
+        }
+
+        allWeeks = groupByWeek(filtered);
+
+        // Compute max metric value for sizing
+        let maxVal = 0;
+        filtered.forEach(a => {
+            const v = getMetricValue(a);
+            if (v > maxVal) maxVal = v;
+        });
+
+        const cal = document.getElementById('calendar');
+        cal.innerHTML = '';
+
+        if (allWeeks.length === 0) {
+            cal.innerHTML = '<div class="no-activities">No activities found for the selected filters.</div>';
+            document.getElementById('loadMoreBtn').style.display = 'none';
+            return;
+        }
+
+        currentWeekOffset = 0;
+        renderWeeks(0, WEEKS_PER_PAGE, maxVal);
+        updateLoadMoreBtn();
+    }
+
+    function renderWeeks(start, count, maxVal) {
+        const cal = document.getElementById('calendar');
+        const end = Math.min(start + count, allWeeks.length);
+        let lastYear = null;
+
+        // Check existing year headers
+        const existingHeaders = cal.querySelectorAll('.year-header');
+        if (existingHeaders.length > 0) {
+            lastYear = parseInt(existingHeaders[existingHeaders.length - 1].textContent);
+        }
+
+        for (let i = start; i < end; i++) {
+            const week = allWeeks[i];
+            const year = week.monday.getFullYear();
+
+            if (year !== lastYear) {
+                // Year header + day labels
+                const yh = document.createElement('div');
+                yh.className = 'year-header';
+                yh.textContent = year;
+                cal.appendChild(yh);
+
+                const dl = document.createElement('div');
+                dl.className = 'day-labels';
+                dl.innerHTML = '<span></span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>';
+                cal.appendChild(dl);
+                lastYear = year;
+            }
+
+            cal.appendChild(createWeekRow(week, maxVal));
+        }
+        currentWeekOffset = end;
+    }
+
+    function createWeekRow(week, maxVal) {
+        const row = document.createElement('div');
+        row.className = 'week-row';
+
+        const sunday = new Date(week.monday);
+        sunday.setDate(sunday.getDate() + 6);
+
+        // Week total
+        let weekTotal = 0;
+        week.days.forEach(dayActivities => {
+            dayActivities.forEach(a => { weekTotal += getMetricValue(a); });
+        });
+
+        const info = document.createElement('div');
+        info.className = 'week-info';
+        info.innerHTML = '<div class="week-dates">' + formatDate(week.monday) + ' - ' + formatDate(sunday) + '</div>' +
+            '<div class="week-total">' + weekTotal.toFixed(1) + ' ' + getMetricUnit() + '</div>';
+        row.appendChild(info);
+
+        for (let d = 0; d < 7; d++) {
+            const cell = document.createElement('div');
+            cell.className = 'day-cell';
+            week.days[d].forEach(a => {
+                const val = getMetricValue(a);
+                const size = computeBubbleSize(val, maxVal);
+                const color = TYPE_COLORS[a.type] || FALLBACK_COLOR;
+
+                const bubble = document.createElement('div');
+                bubble.className = 'activity-bubble';
+                bubble.style.width = size + 'px';
+                bubble.style.height = size + 'px';
+                bubble.style.background = color;
+                bubble.style.fontSize = (size < 40 ? 0.6 : 0.75) + 'em';
+                bubble.textContent = getMetricLabel(a);
+
+                // Tooltip
+                const tip = document.createElement('div');
+                tip.className = 'tooltip';
+                const date = new Date(a.start_date);
+                tip.innerHTML = '<strong>' + escapeHtml(a.name) + '</strong><br>' +
+                    a.type + ' &middot; ' + date.toLocaleDateString() + '<br>' +
+                    a.distance_miles.toFixed(1) + ' mi / ' + a.distance_km.toFixed(1) + ' km<br>' +
+                    a.moving_time_minutes.toFixed(0) + ' min' +
+                    (a.average_heartrate ? ' &middot; ' + a.average_heartrate + ' bpm' : '');
+                bubble.appendChild(tip);
+
+                const nameEl = document.createElement('div');
+                nameEl.className = 'activity-name';
+                nameEl.textContent = a.name;
+
+                cell.appendChild(bubble);
+                cell.appendChild(nameEl);
+            });
+            row.appendChild(cell);
+        }
+        return row;
+    }
+
+    function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    }
+
+    function loadMore() {
+        if (currentWeekOffset >= allWeeks.length) return;
+        // Recompute maxVal
+        const typeFilter = document.getElementById('typeFilter').value;
+        let filtered = ACTIVITIES;
+        if (typeFilter !== 'all') filtered = filtered.filter(a => a.type === typeFilter);
+        let maxVal = 0;
+        filtered.forEach(a => { const v = getMetricValue(a); if (v > maxVal) maxVal = v; });
+
+        renderWeeks(currentWeekOffset, WEEKS_PER_PAGE, maxVal);
+        updateLoadMoreBtn();
+    }
+
+    function updateLoadMoreBtn() {
+        const btn = document.getElementById('loadMoreBtn');
+        if (currentWeekOffset >= allWeeks.length) {
+            btn.style.display = 'none';
+        } else {
+            btn.style.display = 'inline-block';
+            btn.textContent = 'Load More (' + (allWeeks.length - currentWeekOffset) + ' weeks remaining)';
+        }
+    }
+
+    // Attach filter listeners
+    document.getElementById('typeFilter').addEventListener('change', render);
+    document.getElementById('metricFilter').addEventListener('change', render);
+
+    // Initial render
+    render();
+    </script>
+</body>
+</html>

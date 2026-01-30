@@ -1214,4 +1214,57 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
             <p>Make sure you're a member of club {CLUB_ID} and have proper API permissions.</p>
         """)
 
+@app.get("/training-log", response_class=HTMLResponse)
+async def training_log(request: Request, user: dict = Depends(get_current_user)):
+    """
+    Training log - weekly calendar view of activities.
+    All filtering and rendering is done client-side with JavaScript.
+    """
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT * FROM activities
+        WHERE user_id = ?
+        ORDER BY start_date DESC
+    """, (user_id,))
+
+    rows = c.fetchall()
+    conn.close()
+
+    activities = []
+    for row in rows:
+        r = dict(row)
+        distance_m = r.get('distance', 0) or 0
+        moving_time_s = r.get('moving_time', 0) or 0
+        elevation_m = r.get('total_elevation_gain', 0) or 0
+        activities.append({
+            'activity_id': r.get('activity_id'),
+            'name': r.get('name', ''),
+            'type': r.get('type', ''),
+            'start_date': r.get('start_date', ''),
+            'distance_miles': round(distance_m / 1609.344, 2),
+            'distance_km': round(distance_m / 1000, 2),
+            'moving_time_minutes': round(moving_time_s / 60, 1),
+            'elevation_gain_ft': round(elevation_m * 3.28084, 0),
+            'elevation_gain_m': round(elevation_m, 0),
+            'average_heartrate': r.get('average_heartrate'),
+            'calories': r.get('calories'),
+        })
+
+    # Collect unique activity types
+    activity_types = sorted(set(a['type'] for a in activities if a['type']))
+
+    import json
+    return templates.TemplateResponse("training_log.html", {
+        "request": request,
+        "user": user,
+        "activities_json": json.dumps(activities),
+        "activity_types": activity_types,
+    })
+
+
 # To run: uvicorn strava_fastapi:app --reload

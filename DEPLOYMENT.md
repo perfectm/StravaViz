@@ -25,11 +25,11 @@ apt update && apt upgrade -y
 
 ```bash
 # Create a non-root user for running the app
-adduser strava
-usermod -aG sudo strava
+adduser deployuser
+usermod -aG sudo deployuser
 
 # Switch to the new user
-su - strava
+su - deployuser
 ```
 
 ### 3. Install Required Software
@@ -53,12 +53,11 @@ sudo apt install -y certbot python3-certbot-nginx
 ### 1. Clone Repository
 
 ```bash
-# Navigate to home directory
-cd ~
-
-# Clone your repository
-git clone https://github.com/perfectm/StravaViz.git
-cd StravaViz
+# Clone to /opt directory
+sudo mkdir -p /opt/StravaViz
+sudo chown deployuser:deployuser /opt/StravaViz
+git clone https://github.com/perfectm/StravaViz.git /opt/StravaViz
+cd /opt/StravaViz
 ```
 
 ### 2. Set Up Python Virtual Environment
@@ -124,17 +123,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=strava
-Group=strava
-WorkingDirectory=/home/strava/StravaViz
-Environment="PATH=/home/strava/StravaViz/venv/bin"
-ExecStart=/home/strava/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002
+User=deployuser
+Group=deployuser
+WorkingDirectory=/opt/StravaViz
+Environment="PATH=/opt/StravaViz/venv/bin"
+ExecStart=/opt/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002
 Restart=always
 RestartSec=3
 
-# Logging
-StandardOutput=append:/home/strava/StravaViz/production.log
-StandardError=append:/home/strava/StravaViz/error.log
+StandardOutput=append:/opt/StravaViz/production.log
+StandardError=append:/opt/StravaViz/error.log
 
 [Install]
 WantedBy=multi-user.target
@@ -163,7 +161,7 @@ sudo systemctl status stravaviz
 curl http://localhost:8002
 
 # View logs
-tail -f /home/strava/StravaViz/production.log
+tail -f /opt/StravaViz/production.log
 ```
 
 ## Nginx Configuration
@@ -280,7 +278,7 @@ Visit `https://yourdomain.com` in your browser - you should see a secure connect
 ### 1. Initialize Database
 
 ```bash
-cd /home/strava/StravaViz
+cd /opt/StravaViz
 
 # Activate virtual environment
 source venv/bin/activate
@@ -297,7 +295,7 @@ python3 -c "from strava_fastapi import init_db; init_db()"
 chmod 644 strava_activities.db
 
 # Ensure directory is writable
-chmod 755 /home/strava/StravaViz
+chmod 755 /opt/StravaViz
 ```
 
 ## Post-Deployment Tasks
@@ -325,7 +323,7 @@ curl https://yourdomain.com/club
 
 ```bash
 # Application logs
-tail -f /home/strava/StravaViz/production.log
+tail -f /opt/StravaViz/production.log
 
 # Nginx access logs
 sudo tail -f /var/log/nginx/stravaviz_access.log
@@ -343,10 +341,10 @@ sudo journalctl -u stravaviz -f
 
 ```bash
 # SSH into server
-ssh strava@your-server-ip
+ssh deployuser@your-server-ip
 
 # Navigate to app directory
-cd ~/StravaViz
+cd /opt/StravaViz
 
 # Pull latest changes
 git pull origin main
@@ -374,11 +372,11 @@ nano ~/backup_strava.sh
 Add:
 ```bash
 #!/bin/bash
-BACKUP_DIR="/home/strava/backups"
+BACKUP_DIR="/opt/StravaViz/backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p $BACKUP_DIR
-cp /home/strava/StravaViz/strava_activities.db $BACKUP_DIR/strava_activities_$DATE.db
+cp /opt/StravaViz/strava_activities.db $BACKUP_DIR/strava_activities_$DATE.db
 
 # Keep only last 7 backups
 ls -t $BACKUP_DIR/strava_activities_*.db | tail -n +8 | xargs -r rm
@@ -392,7 +390,7 @@ chmod +x ~/backup_strava.sh
 crontab -e
 
 # Add daily backup at 2 AM
-0 2 * * * /home/strava/backup_strava.sh
+0 2 * * * /home/deployuser/backup_strava.sh
 ```
 
 ### Monitor Disk Space
@@ -402,10 +400,10 @@ crontab -e
 df -h
 
 # Check database size
-du -h /home/strava/StravaViz/strava_activities.db
+du -h /opt/StravaViz/strava_activities.db
 
 # Check log file sizes
-du -h /home/strava/StravaViz/*.log
+du -h /opt/StravaViz/*.log
 ```
 
 ### Rotate Logs
@@ -417,14 +415,14 @@ sudo nano /etc/logrotate.d/stravaviz
 
 Add:
 ```
-/home/strava/StravaViz/*.log {
+/opt/StravaViz/*.log {
     daily
     rotate 7
     compress
     delaycompress
     missingok
     notifempty
-    create 0644 strava strava
+    create 0644 deployuser deployuser
     postrotate
         systemctl reload stravaviz > /dev/null 2>&1 || true
     endscript
@@ -487,7 +485,7 @@ sudo journalctl -u stravaviz -n 50 --no-pager
 sudo lsof -i :8002
 
 # Test app manually
-cd /home/strava/StravaViz
+cd /opt/StravaViz
 source venv/bin/activate
 uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002
 ```
@@ -512,8 +510,8 @@ sudo systemctl restart nginx
 
 ```bash
 # If you see permission errors
-cd /home/strava/StravaViz
-sudo chown strava:strava strava_activities.db
+cd /opt/StravaViz
+sudo chown deployuser:deployuser strava_activities.db
 chmod 644 strava_activities.db
 ```
 
@@ -556,7 +554,7 @@ sudo nano /etc/systemd/system/stravaviz.service
 
 Change ExecStart line to:
 ```
-ExecStart=/home/strava/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002 --workers 4
+ExecStart=/opt/StravaViz/venv/bin/uvicorn strava_fastapi:app --host 127.0.0.1 --port 8002 --workers 4
 ```
 
 Reload and restart:
@@ -580,7 +578,7 @@ htop
 
 ```bash
 # Real-time log monitoring
-tail -f /home/strava/StravaViz/production.log
+tail -f /opt/StravaViz/production.log
 
 # Check service resource usage
 systemctl status stravaviz
@@ -596,13 +594,13 @@ sudo journalctl -u stravaviz --since today
 sudo systemctl restart stravaviz
 
 # View application logs
-tail -f /home/strava/StravaViz/production.log
+tail -f /opt/StravaViz/production.log
 
 # Restart nginx
 sudo systemctl restart nginx
 
 # Pull latest code
-cd ~/StravaViz && git pull && sudo systemctl restart stravaviz
+cd /opt/StravaViz && git pull && sudo systemctl restart stravaviz
 
 # Check application status
 sudo systemctl status stravaviz
@@ -614,7 +612,7 @@ sudo systemctl status nginx
 sudo certbot renew
 
 # Backup database
-cp /home/strava/StravaViz/strava_activities.db ~/backup_$(date +%Y%m%d).db
+cp /opt/StravaViz/strava_activities.db ~/backup_$(date +%Y%m%d).db
 ```
 
 ## Cost Optimization

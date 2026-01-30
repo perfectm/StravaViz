@@ -504,6 +504,19 @@
                             </tr>
                             {% endfor %}
                         </tbody>
+                        {% if hr_zone_averages %}
+                        <tfoot>
+                            <tr style="border-top: 2px solid #ddd; background: #f8f9fa;">
+                                <td><strong>Average</strong></td>
+                                <td><strong>{{ hr_zone_averages.zone_1_mins }}</strong></td>
+                                <td><strong>{{ hr_zone_averages.zone_2_mins }}</strong></td>
+                                <td><strong>{{ hr_zone_averages.zone_3_mins }}</strong></td>
+                                <td><strong>{{ hr_zone_averages.zone_4_mins }}</strong></td>
+                                <td><strong>{{ hr_zone_averages.zone_5_mins }}</strong></td>
+                                <td><strong>{{ hr_zone_averages.total_mins }}</strong></td>
+                            </tr>
+                        </tfoot>
+                        {% endif %}
                     </table>
                 </div>
                 {% endif %}

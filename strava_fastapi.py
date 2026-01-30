@@ -1080,6 +1080,19 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
     hr_zone_chart = generate_hr_zone_chart(weekly_hr_zones)
     daily_hr_zones = get_daily_hr_zones(user_id)
 
+    # Compute weekly averages for HR zones
+    hr_zone_averages = None
+    if weekly_hr_zones:
+        n = len(weekly_hr_zones)
+        hr_zone_averages = {
+            'zone_1_mins': round(sum(w['zone_1_mins'] for w in weekly_hr_zones) / n, 1),
+            'zone_2_mins': round(sum(w['zone_2_mins'] for w in weekly_hr_zones) / n, 1),
+            'zone_3_mins': round(sum(w['zone_3_mins'] for w in weekly_hr_zones) / n, 1),
+            'zone_4_mins': round(sum(w['zone_4_mins'] for w in weekly_hr_zones) / n, 1),
+            'zone_5_mins': round(sum(w['zone_5_mins'] for w in weekly_hr_zones) / n, 1),
+            'total_mins': round(sum(w['total_mins'] for w in weekly_hr_zones) / n, 1),
+        }
+
     context = {
         "request": request,
         "user": user,  # Add authenticated user information
@@ -1098,6 +1111,7 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
         "hr_zone_chart": hr_zone_chart,
         "weekly_hr_zones": weekly_hr_zones,
         "daily_hr_zones": daily_hr_zones,
+        "hr_zone_averages": hr_zone_averages,
         **stats
     }
 

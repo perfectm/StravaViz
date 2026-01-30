@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Strava API URLs
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
+STRAVA_ACTIVITY_ZONES_URL = "https://www.strava.com/api/v3/activities/{activity_id}/zones"
 
 # Load environment
 CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
@@ -222,21 +223,35 @@ def save_activities(user_id: int, activities: List[dict]) -> int:
             average_heartrate = activity.get('average_heartrate')
             max_heartrate = activity.get('max_heartrate')
             calories = activity.get('calories')
+            kudos_count = activity.get('kudos_count', 0)
+            visibility = activity.get('visibility', 'everyone')  # everyone, only_me, followers_only
 
-            # Insert or ignore (skip duplicates)
+            # Check if activity exists
             cursor.execute("""
-                INSERT OR IGNORE INTO activities (
-                    user_id, activity_id, name, type, start_date, distance,
-                    moving_time, elapsed_time, total_elevation_gain,
-                    average_speed, max_speed, average_heartrate,
-                    max_heartrate, calories
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, activity_id, name, activity_type, start_date, distance,
-                  moving_time, elapsed_time, total_elevation_gain,
-                  average_speed, max_speed, average_heartrate,
-                  max_heartrate, calories))
+                SELECT id FROM activities WHERE user_id = ? AND activity_id = ?
+            """, (user_id, activity_id))
+            existing = cursor.fetchone()
 
-            if cursor.rowcount > 0:
+            if existing:
+                # Update existing activity (visibility, kudos may have changed)
+                cursor.execute("""
+                    UPDATE activities
+                    SET kudos_count = ?, visibility = ?
+                    WHERE user_id = ? AND activity_id = ?
+                """, (kudos_count, visibility, user_id, activity_id))
+            else:
+                # Insert new activity
+                cursor.execute("""
+                    INSERT INTO activities (
+                        user_id, activity_id, name, type, start_date, distance,
+                        moving_time, elapsed_time, total_elevation_gain,
+                        average_speed, max_speed, average_heartrate,
+                        max_heartrate, calories, kudos_count, visibility
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, activity_id, name, activity_type, start_date, distance,
+                      moving_time, elapsed_time, total_elevation_gain,
+                      average_speed, max_speed, average_heartrate,
+                      max_heartrate, calories, kudos_count, visibility))
                 new_count += 1
 
         except Exception as e:
@@ -247,6 +262,119 @@ def save_activities(user_id: int, activities: List[dict]) -> int:
     conn.close()
 
     return new_count
+
+
+def fetch_activity_zones(access_token: str, activity_id: int) -> Optional[dict]:
+    """
+    Fetch HR zone distribution for a specific activity from Strava API.
+
+    Args:
+        access_token: Strava access token
+        activity_id: Strava activity ID
+
+    Returns:
+        Dict with zone seconds (zone_1 through zone_5) or None on failure
+    """
+    try:
+        response = requests.get(
+            STRAVA_ACTIVITY_ZONES_URL.format(activity_id=activity_id),
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10
+        )
+
+        if response.status_code == 429:
+            logger.warning("Rate limit hit while fetching activity zones")
+            return None
+        elif response.status_code != 200:
+            logger.debug(f"Failed to fetch zones for activity {activity_id}: {response.status_code}")
+            return None
+
+        zones_data = response.json()
+
+        # Find the heartrate zone distribution
+        for zone_info in zones_data:
+            if zone_info.get('type') == 'heartrate':
+                buckets = zone_info.get('distribution_buckets', [])
+                zone_seconds = {}
+                for i, bucket in enumerate(buckets[:5], start=1):
+                    zone_seconds[f'zone_{i}_seconds'] = bucket.get('time', 0)
+                return zone_seconds
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Error fetching zones for activity {activity_id}: {e}")
+        return None
+
+
+def sync_hr_zones_for_user(user_id: int, access_token: str, limit: int = 20) -> int:
+    """
+    Fetch and store HR zone data for activities that have heart rate data
+    but no zone data yet.
+
+    Args:
+        user_id: User ID
+        access_token: Strava access token
+        limit: Max number of zone fetches per sync cycle (rate limit protection)
+
+    Returns:
+        Number of activities with zones fetched
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Find activities with heart rate data that don't have zone data yet
+    cursor.execute("""
+        SELECT a.activity_id
+        FROM activities a
+        LEFT JOIN activity_hr_zones z ON a.user_id = z.user_id AND a.activity_id = z.activity_id
+        WHERE a.user_id = ?
+          AND a.average_heartrate IS NOT NULL
+          AND z.id IS NULL
+        ORDER BY a.start_date DESC
+        LIMIT ?
+    """, (user_id, limit))
+
+    activities_needing_zones = [row['activity_id'] for row in cursor.fetchall()]
+    conn.close()
+
+    if not activities_needing_zones:
+        return 0
+
+    fetched_count = 0
+    for activity_id in activities_needing_zones:
+        zone_data = fetch_activity_zones(access_token, activity_id)
+        if zone_data is None:
+            continue
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT OR IGNORE INTO activity_hr_zones
+                (user_id, activity_id, zone_1_seconds, zone_2_seconds,
+                 zone_3_seconds, zone_4_seconds, zone_5_seconds, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                user_id, activity_id,
+                zone_data.get('zone_1_seconds', 0),
+                zone_data.get('zone_2_seconds', 0),
+                zone_data.get('zone_3_seconds', 0),
+                zone_data.get('zone_4_seconds', 0),
+                zone_data.get('zone_5_seconds', 0),
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            fetched_count += 1
+        except Exception as e:
+            logger.error(f"Error saving HR zones for activity {activity_id}: {e}")
+        finally:
+            conn.close()
+
+        # Small delay between API calls
+        time.sleep(0.3)
+
+    return fetched_count
 
 
 def sync_user_activities(user_id: int) -> Tuple[int, Optional[str]]:
@@ -300,6 +428,21 @@ def sync_user_activities(user_id: int) -> Tuple[int, Optional[str]]:
     new_count = save_activities(user_id, activities)
 
     logger.info(f"User {user_id}: Saved {new_count} new activities (fetched {len(activities)})")
+
+    # Fetch HR zones for activities with heart rate data (if table exists)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='activity_hr_zones'")
+        has_zones_table = cursor.fetchone() is not None
+        conn.close()
+
+        if has_zones_table:
+            zones_count = sync_hr_zones_for_user(user_id, user['access_token'])
+            if zones_count > 0:
+                logger.info(f"User {user_id}: Fetched HR zones for {zones_count} activities")
+    except Exception as e:
+        logger.error(f"User {user_id}: Error syncing HR zones: {e}")
 
     return new_count, None
 
@@ -379,6 +522,10 @@ def calculate_weekly_trophies() -> dict:
     }
 
     try:
+        # Trophy calculation starts from the beginning of 2026
+        # (First Monday of 2026: January 5, 2026)
+        TROPHY_START_DATE = datetime(2026, 1, 5, 0, 0, 0)
+
         # Get the date range of all activities
         cursor.execute("""
             SELECT MIN(start_date) as first_activity, MAX(start_date) as last_activity
@@ -393,9 +540,12 @@ def calculate_weekly_trophies() -> dict:
         first_activity = datetime.fromisoformat(row['first_activity'].replace('Z', '+00:00'))
         last_activity = datetime.fromisoformat(row['last_activity'].replace('Z', '+00:00'))
 
-        # Calculate weekly winners from first activity to now
-        current_week_start = first_activity - timedelta(days=first_activity.weekday())  # Start of week (Monday)
-        current_week_start = current_week_start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        # Calculate weekly winners from first activity to now, but not before TROPHY_START_DATE
+        first_week_start = first_activity - timedelta(days=first_activity.weekday())  # Start of week (Monday)
+        first_week_start = first_week_start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+        # Start from the later of: first activity week or trophy start date
+        current_week_start = max(first_week_start, TROPHY_START_DATE)
 
         # Use timezone-naive datetime for comparison
         now = datetime.now()
@@ -422,7 +572,7 @@ def calculate_weekly_trophies() -> dict:
                 current_week_start = week_end
                 continue
 
-            # Calculate weekly totals for each user
+            # Calculate weekly totals for each user (excluding private activities)
             cursor.execute("""
                 SELECT
                     user_id,
@@ -431,6 +581,7 @@ def calculate_weekly_trophies() -> dict:
                 FROM activities
                 WHERE start_date >= ? AND start_date < ?
                 AND type IN ('Walk', 'Hike', 'Run', 'Ride')
+                AND visibility != 'only_me'
                 GROUP BY user_id
                 HAVING total_distance > 0
                 ORDER BY total_distance DESC
@@ -489,6 +640,7 @@ def calculate_weekly_trophies() -> dict:
 def get_trophy_leaderboard() -> list:
     """
     Get the all-time trophy leaderboard (respects privacy settings)
+    Only counts trophies from 2026 onwards
 
     Returns:
         List of dicts with user info and trophy counts
@@ -508,7 +660,9 @@ def get_trophy_leaderboard() -> list:
             MAX(wt.week_start) as latest_trophy
         FROM users u
         INNER JOIN weekly_trophies wt ON u.id = wt.user_id
-        WHERE u.is_active = 1 AND u.privacy_level != 'private'
+        WHERE u.is_active = 1
+          AND u.privacy_level != 'private'
+          AND wt.week_start >= '2026-01-05'
         GROUP BY u.id
         ORDER BY trophy_count DESC, total_winning_distance DESC
     """)
@@ -522,6 +676,7 @@ def get_trophy_leaderboard() -> list:
 def get_recent_trophy_winners(limit: int = 10) -> list:
     """
     Get recent weekly trophy winners (respects privacy settings)
+    Only shows trophies from 2026 onwards
 
     Args:
         limit: Number of recent winners to return
@@ -543,7 +698,9 @@ def get_recent_trophy_winners(limit: int = 10) -> list:
             u.profile_picture
         FROM weekly_trophies wt
         INNER JOIN users u ON wt.user_id = u.id
-        WHERE u.is_active = 1 AND u.privacy_level != 'private'
+        WHERE u.is_active = 1
+          AND u.privacy_level != 'private'
+          AND wt.week_start >= '2026-01-05'
         ORDER BY wt.week_start DESC
         LIMIT ?
     """, (limit,))
@@ -552,6 +709,132 @@ def get_recent_trophy_winners(limit: int = 10) -> list:
     conn.close()
 
     return winners
+
+
+def get_weekly_kudos_leaderboard() -> list:
+    """
+    Get the current week's kudos leaderboard (respects privacy settings)
+    Shows who received the most kudos this week
+
+    Returns:
+        List of dicts with user info and kudos counts for current week
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Get current week boundaries (Monday to Sunday)
+    today = datetime.now()
+    week_start = today - timedelta(days=today.weekday())  # Monday
+    week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_end = week_start + timedelta(days=7)
+
+    cursor.execute("""
+        SELECT
+            u.id,
+            u.firstname,
+            u.lastname,
+            u.profile_picture,
+            SUM(a.kudos_count) as total_kudos,
+            COUNT(a.id) as activity_count
+        FROM users u
+        INNER JOIN activities a ON u.id = a.user_id
+        WHERE u.is_active = 1
+          AND u.privacy_level != 'private'
+          AND a.visibility != 'only_me'
+          AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
+          AND a.start_date >= ?
+          AND a.start_date < ?
+          AND a.kudos_count > 0
+        GROUP BY u.id
+        ORDER BY total_kudos DESC
+        LIMIT 10
+    """, (week_start.isoformat(), week_end.isoformat()))
+
+    leaderboard = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return leaderboard
+
+
+def get_alltime_kudos_leaderboard() -> list:
+    """
+    Get the all-time kudos leaderboard (respects privacy settings)
+    Shows who has received the most kudos overall (from 2026 onwards)
+
+    Returns:
+        List of dicts with user info and total kudos counts
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            u.id,
+            u.firstname,
+            u.lastname,
+            u.profile_picture,
+            SUM(a.kudos_count) as total_kudos,
+            COUNT(a.id) as activity_count,
+            ROUND(AVG(a.kudos_count), 1) as avg_kudos_per_activity
+        FROM users u
+        INNER JOIN activities a ON u.id = a.user_id
+        WHERE u.is_active = 1
+          AND u.privacy_level != 'private'
+          AND a.visibility != 'only_me'
+          AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
+          AND a.start_date >= '2026-01-01'
+          AND a.kudos_count > 0
+        GROUP BY u.id
+        ORDER BY total_kudos DESC
+        LIMIT 10
+    """)
+
+    leaderboard = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return leaderboard
+
+
+def get_most_kudos_single_activity() -> dict:
+    """
+    Get the single activity with the most kudos (respects privacy settings)
+    From 2026 onwards
+
+    Returns:
+        Dict with activity info and kudos count, or None if no activities
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            a.id,
+            a.name,
+            a.type,
+            a.distance,
+            a.start_date,
+            a.kudos_count,
+            u.firstname,
+            u.lastname,
+            u.profile_picture
+        FROM activities a
+        INNER JOIN users u ON a.user_id = u.id
+        WHERE u.is_active = 1
+          AND u.privacy_level != 'private'
+          AND a.visibility != 'only_me'
+          AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
+          AND a.start_date >= '2026-01-01'
+          AND a.kudos_count > 0
+        ORDER BY a.kudos_count DESC
+        LIMIT 1
+    """)
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        return dict(row)
+    return None
 
 
 if __name__ == "__main__":

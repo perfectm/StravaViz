@@ -90,12 +90,13 @@ def create_or_update_user(athlete_data: dict, access_token: str, refresh_token: 
     existing_user = get_user_by_strava_id(strava_athlete_id)
 
     if existing_user:
-        # Update existing user
+        # Update existing user (and reactivate if they were deactivated)
         cursor.execute("""
             UPDATE users
             SET firstname = ?, lastname = ?, profile_picture = ?,
                 access_token = ?, refresh_token = ?, token_expires_at = ?,
-                last_login = CURRENT_TIMESTAMP
+                last_login = CURRENT_TIMESTAMP,
+                is_active = 1
             WHERE strava_athlete_id = ?
         """, (firstname, lastname, profile_picture, access_token,
               refresh_token, expires_at, strava_athlete_id))

@@ -14,6 +14,10 @@ from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
+import time
+
+# Load environment variables FIRST before other imports that need them
+load_dotenv()
 
 # Import authentication utilities
 from auth import (
@@ -35,7 +39,10 @@ from sync_service import (
     sync_user_activities,
     calculate_weekly_trophies,
     get_trophy_leaderboard,
-    get_recent_trophy_winners
+    get_recent_trophy_winners,
+    get_weekly_kudos_leaderboard,
+    get_alltime_kudos_leaderboard,
+    get_most_kudos_single_activity
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
@@ -98,10 +105,7 @@ async def shutdown_event():
     scheduler.shutdown()
     logger.info("Background scheduler stopped")
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Set your Strava API credentials here
+# Set your Strava API credentials here (loaded at top of file)
 CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
 CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
@@ -384,6 +388,144 @@ def get_weekly_progress(df):
         'week_end': (week_end - timedelta(days=1)).strftime('%b %d')
     }
 
+def get_weekly_hr_zones(user_id, num_weeks=8):
+    """
+    Get weekly heart rate zone summaries for the last N weeks.
+    Includes ALL activity types (not just Walk/Hike/Run).
+
+    Args:
+        user_id: User ID
+        num_weeks: Number of weeks to include
+
+    Returns:
+        List of weekly summaries with zone minutes, or None if no data
+    """
+    try:
+        conn = sqlite3.connect('strava_activities.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Check if table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='activity_hr_zones'")
+        if not cursor.fetchone():
+            conn.close()
+            return None
+
+        # Calculate date range
+        today = datetime.now()
+        week_start = today - timedelta(days=today.weekday())  # Monday
+        week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        range_start = week_start - timedelta(weeks=num_weeks - 1)
+
+        cursor.execute("""
+            SELECT
+                strftime('%Y-%W', a.start_date) as year_week,
+                MIN(date(a.start_date, 'weekday 1', '-7 days')) as week_start_date,
+                SUM(z.zone_1_seconds) as zone_1,
+                SUM(z.zone_2_seconds) as zone_2,
+                SUM(z.zone_3_seconds) as zone_3,
+                SUM(z.zone_4_seconds) as zone_4,
+                SUM(z.zone_5_seconds) as zone_5,
+                SUM(z.zone_1_seconds + z.zone_2_seconds + z.zone_3_seconds + z.zone_4_seconds + z.zone_5_seconds) as total
+            FROM activity_hr_zones z
+            INNER JOIN activities a ON z.user_id = a.user_id AND z.activity_id = a.activity_id
+            WHERE z.user_id = ?
+              AND a.start_date >= ?
+            GROUP BY year_week
+            ORDER BY year_week ASC
+        """, (user_id, range_start.isoformat()))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            return None
+
+        weeks = []
+        for row in rows:
+            weeks.append({
+                'week_label': row['week_start_date'] if row['week_start_date'] else row['year_week'],
+                'zone_1_mins': round(row['zone_1'] / 60, 1),
+                'zone_2_mins': round(row['zone_2'] / 60, 1),
+                'zone_3_mins': round(row['zone_3'] / 60, 1),
+                'zone_4_mins': round(row['zone_4'] / 60, 1),
+                'zone_5_mins': round(row['zone_5'] / 60, 1),
+                'total_mins': round(row['total'] / 60, 1),
+            })
+
+        return weeks
+
+    except Exception as e:
+        logger.error(f"Error getting weekly HR zones: {e}")
+        return None
+
+
+def generate_hr_zone_chart(weekly_data):
+    """
+    Generate a stacked bar chart of weekly HR zone distribution.
+
+    Args:
+        weekly_data: List of weekly zone dicts from get_weekly_hr_zones()
+
+    Returns:
+        Base64-encoded PNG string, or None
+    """
+    if not weekly_data:
+        return None
+
+    import numpy as np
+
+    labels = []
+    for w in weekly_data:
+        try:
+            dt = datetime.strptime(w['week_label'], '%Y-%m-%d')
+            labels.append(dt.strftime('%b %d'))
+        except (ValueError, TypeError):
+            labels.append(str(w['week_label']))
+
+    z1 = [w['zone_1_mins'] for w in weekly_data]
+    z2 = [w['zone_2_mins'] for w in weekly_data]
+    z3 = [w['zone_3_mins'] for w in weekly_data]
+    z4 = [w['zone_4_mins'] for w in weekly_data]
+    z5 = [w['zone_5_mins'] for w in weekly_data]
+
+    x = np.arange(len(labels))
+    width = 0.6
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    colors = {
+        'Z1': '#9E9E9E',   # Gray
+        'Z2': '#2196F3',   # Blue
+        'Z3': '#4CAF50',   # Green
+        'Z4': '#FF9800',   # Orange
+        'Z5': '#F44336',   # Red
+    }
+
+    b1 = ax.bar(x, z1, width, label='Zone 1 (Recovery)', color=colors['Z1'])
+    b2 = ax.bar(x, z2, width, bottom=z1, label='Zone 2 (Endurance)', color=colors['Z2'])
+    bottom3 = [a + b for a, b in zip(z1, z2)]
+    b3 = ax.bar(x, z3, width, bottom=bottom3, label='Zone 3 (Tempo)', color=colors['Z3'])
+    bottom4 = [a + b for a, b in zip(bottom3, z3)]
+    b4 = ax.bar(x, z4, width, bottom=bottom4, label='Zone 4 (Threshold)', color=colors['Z4'])
+    bottom5 = [a + b for a, b in zip(bottom4, z4)]
+    b5 = ax.bar(x, z5, width, bottom=bottom5, label='Zone 5 (VO2 Max)', color=colors['Z5'])
+
+    ax.set_xlabel('Week Starting')
+    ax.set_ylabel('Minutes')
+    ax.set_title('Heart Rate Zone Distribution (Last 8 Weeks)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=45, ha='right')
+    ax.legend(loc='upper left', fontsize=8)
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
 def get_club_comparison(user_id):
     """Compare user stats with club averages"""
     try:
@@ -483,7 +625,7 @@ async def auth_login(request: Request):
 
 
 @app.get("/auth/callback")
-async def auth_callback(request: Request, response: Response, code: str = None, state: str = None, error: str = None):
+async def auth_callback(request: Request, response: Response, code: str = None, state: str = None, error: str = None, scope: str = None):
     """
     OAuth callback from Strava
     Exchanges code for tokens and creates user session
@@ -503,6 +645,22 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
             "request": request,
             "error_title": "Authentication Failed",
             "error_message": "Invalid state parameter. Please try logging in again."
+        })
+
+    # Verify required scopes were granted
+    granted_scopes = set(scope.split(',')) if scope else set()
+    required_scopes = {'read', 'activity:read_all'}
+
+    if not required_scopes.issubset(granted_scopes):
+        missing_scopes = required_scopes - granted_scopes
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error_title": "Insufficient Permissions",
+            "error_message": (
+                f"The app requires permission to read your activities. "
+                f"Missing permissions: {', '.join(missing_scopes)}. "
+                f"Please try logging in again and accept all requested permissions."
+            )
         })
 
     # Exchange code for tokens
@@ -534,6 +692,16 @@ async def auth_callback(request: Request, response: Response, code: str = None, 
 
         # Create or update user
         user = create_or_update_user(athlete_data, access_token, refresh_token, expires_at)
+
+        # Trigger immediate activity sync for this user (runs in background)
+        # This ensures first-time users don't have to wait for the 15-minute background sync
+        scheduler.add_job(
+            sync_user_activities,
+            args=[user['id']],
+            id=f'login_sync_{user["id"]}_{int(time.time())}',
+            replace_existing=False
+        )
+        logger.info(f"Scheduled immediate activity sync for user {user['id']} after login")
 
         # Create session
         session_id = create_session(user['id'])
@@ -806,6 +974,10 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
     weekly_progress = get_weekly_progress(df)
     club_comparison = get_club_comparison(user_id)
 
+    # Get HR zone data
+    weekly_hr_zones = get_weekly_hr_zones(user_id)
+    hr_zone_chart = generate_hr_zone_chart(weekly_hr_zones)
+
     context = {
         "request": request,
         "user": user,  # Add authenticated user information
@@ -821,6 +993,8 @@ async def dashboard(request: Request, user: dict = Depends(get_current_user)):
         "personal_records": personal_records,
         "weekly_progress": weekly_progress,
         "club_comparison": club_comparison,
+        "hr_zone_chart": hr_zone_chart,
+        "weekly_hr_zones": weekly_hr_zones,
         **stats
     }
 
@@ -846,7 +1020,9 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
         cursor = conn.cursor()
 
         # Get activities from all users who are NOT private
-        # Since all viewers are authenticated club members, we show 'public' and 'club_only'
+        # Since all viewers are authenticated club members, we show:
+        #   - User privacy: 'public' and 'club_only' (not 'private')
+        #   - Activity visibility: 'everyone' and 'followers_only' (not 'only_me')
         cursor.execute("""
             SELECT
                 a.*,
@@ -857,6 +1033,7 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
             INNER JOIN users u ON a.user_id = u.id
             WHERE u.is_active = 1
               AND u.privacy_level != 'private'
+              AND a.visibility != 'only_me'
               AND a.type IN ('Walk', 'Hike', 'Run', 'Ride')
             ORDER BY a.start_date DESC
         """)
@@ -999,6 +1176,11 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
         trophy_leaderboard = get_trophy_leaderboard()
         recent_trophy_winners = get_recent_trophy_winners(limit=5)
 
+        # Get kudos leaderboards
+        weekly_kudos_leaderboard = get_weekly_kudos_leaderboard()
+        alltime_kudos_leaderboard = get_alltime_kudos_leaderboard()
+        most_kudos_activity = get_most_kudos_single_activity()
+
         context = {
             "request": request,
             "user": user,  # Add authenticated user information
@@ -1015,6 +1197,9 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
             "weekly_leaderboard": weekly_leaderboard_data[:10],  # Top 10 for the week
             "trophy_leaderboard": trophy_leaderboard,  # All-time trophy winners
             "recent_trophy_winners": recent_trophy_winners,  # Recent 5 weeks
+            "weekly_kudos_leaderboard": weekly_kudos_leaderboard,  # Weekly kudos leaders
+            "alltime_kudos_leaderboard": alltime_kudos_leaderboard,  # All-time kudos leaders
+            "most_kudos_activity": most_kudos_activity,  # Single activity with most kudos
             "leaderboard_chart": leaderboard_chart,
             "type_chart": type_chart,
             "type_counts": type_counts,

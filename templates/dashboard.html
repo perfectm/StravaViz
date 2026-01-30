@@ -266,6 +266,47 @@
                 </div>
             </section>
 
+            {% if hr_zone_chart %}
+            <section class="section">
+                <h2>Heart Rate Zones</h2>
+                <p style="color: #666; margin-bottom: 1.5rem;">Weekly time in each HR zone across all activity types (last 8 weeks)</p>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{{ hr_zone_chart }}" alt="Heart Rate Zone Distribution"/>
+                </div>
+                {% if weekly_hr_zones %}
+                <div class="data-table" style="margin-top: 1.5rem;">
+                    <h3>Weekly Breakdown (minutes)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Week</th>
+                                <th style="color: #9E9E9E;">Z1 Recovery</th>
+                                <th style="color: #2196F3;">Z2 Endurance</th>
+                                <th style="color: #4CAF50;">Z3 Tempo</th>
+                                <th style="color: #FF9800;">Z4 Threshold</th>
+                                <th style="color: #F44336;">Z5 VO2 Max</th>
+                                <th>Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for week in weekly_hr_zones %}
+                            <tr>
+                                <td>{{ week.week_label }}</td>
+                                <td>{{ week.zone_1_mins }}</td>
+                                <td>{{ week.zone_2_mins }}</td>
+                                <td>{{ week.zone_3_mins }}</td>
+                                <td>{{ week.zone_4_mins }}</td>
+                                <td>{{ week.zone_5_mins }}</td>
+                                <td><strong>{{ week.total_mins }}</strong></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            </section>
+            {% endif %}
+
             {% if weekly_progress %}
             <section class="section">
                 <h2>📅 This Week's Progress</h2>

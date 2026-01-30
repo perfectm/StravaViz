@@ -237,12 +237,7 @@
     <main>
         <div class="container">
             <section class="section">
-                <h2>Club Overview (Club ID: {{ club_id }})</h2>
-                <div class="warning-banner">
-                    <strong>⚠️ Note:</strong> Club data is limited by the Strava API. Names show as "FirstName L." format,
-                    and only recent activities are available without timestamps. For full data access, consider implementing
-                    individual athlete authentication.
-                </div>
+                <h2>LOC Strava Running Club</h2>
                 <div class="overview-grid">
                     <div class="stat-card">
                         <div class="stat-value">{{ total_activities }}</div>
@@ -404,6 +399,107 @@
             </section>
             {% endif %}
 
+            {% if weekly_kudos_leaderboard and weekly_kudos_leaderboard|length > 0 %}
+            <section class="section">
+                <h2>👏 Weekly Kudos Leaders - Current Week</h2>
+                <p style="color: #666; margin-bottom: 20px;">Athletes with the most kudos received this week (Monday-Sunday).</p>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Athlete</th>
+                                <th>👏 Total Kudos</th>
+                                <th>Activities</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for athlete in weekly_kudos_leaderboard %}
+                            <tr {% if loop.index == 1 %}style="background-color: #fff9e6;"{% endif %}>
+                                <td>
+                                    {% if loop.index == 1 %}🥇
+                                    {% elif loop.index == 2 %}🥈
+                                    {% elif loop.index == 3 %}🥉
+                                    {% else %}{{ loop.index }}{% endif %}
+                                </td>
+                                <td><strong>{{ athlete['firstname'] }} {{ athlete['lastname'] }}</strong></td>
+                                <td><strong>{{ athlete['total_kudos'] }}</strong></td>
+                                <td>{{ athlete['activity_count'] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if alltime_kudos_leaderboard and alltime_kudos_leaderboard|length > 0 %}
+            <section class="section">
+                <h2>🌟 All-Time Kudos Leaders</h2>
+                <p style="color: #666; margin-bottom: 20px;">Athletes with the most total kudos received (from 2026 onwards).</p>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Athlete</th>
+                                <th>👏 Total Kudos</th>
+                                <th>Activities</th>
+                                <th>Avg Kudos/Activity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for athlete in alltime_kudos_leaderboard %}
+                            <tr {% if loop.index == 1 %}style="background-color: #fff9e6;"{% endif %}>
+                                <td>
+                                    {% if loop.index == 1 %}🥇
+                                    {% elif loop.index == 2 %}🥈
+                                    {% elif loop.index == 3 %}🥉
+                                    {% else %}{{ loop.index }}{% endif %}
+                                </td>
+                                <td><strong>{{ athlete['firstname'] }} {{ athlete['lastname'] }}</strong></td>
+                                <td><strong>{{ athlete['total_kudos'] }}</strong></td>
+                                <td>{{ athlete['activity_count'] }}</td>
+                                <td>{{ athlete['avg_kudos_per_activity'] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% endif %}
+
+            {% if most_kudos_activity %}
+            <section class="section">
+                <h2>🔥 Most Kudos on a Single Activity</h2>
+                <p style="color: #666; margin-bottom: 20px;">The single activity that received the most kudos ever!</p>
+                <div class="data-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Athlete</th>
+                                <th>Activity Name</th>
+                                <th>Type</th>
+                                <th>Distance (km)</th>
+                                <th>Date</th>
+                                <th>👏 Kudos</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="background-color: #fff9e6;">
+                                <td><strong>{{ most_kudos_activity['firstname'] }} {{ most_kudos_activity['lastname'] }}</strong></td>
+                                <td>{{ most_kudos_activity['name'] }}</td>
+                                <td>{{ most_kudos_activity['type'] }}</td>
+                                <td>{{ (most_kudos_activity['distance'] / 1000)|round(2) }}</td>
+                                <td>{{ most_kudos_activity['start_date'][:10] }}</td>
+                                <td><strong style="font-size: 1.2em; color: #fc4c02;">{{ most_kudos_activity['kudos_count'] }}</strong></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% endif %}
+
             {% if type_chart %}
             <section class="section">
                 <h2>📊 Activity Type Distribution</h2>
@@ -429,7 +525,7 @@
                         <tbody>
                             {% for activity in recent_activities %}
                             <tr>
-                                <td>{{ activity.get('athlete', {}).get('firstname', 'Unknown') }}</td>
+                                <td>{{ activity['athlete.firstname'] }}</td>
                                 <td>{{ activity.get('name', 'Untitled') }}</td>
                                 <td>{{ activity.get('type', 'N/A') }}</td>
                                 <td>{{ (activity.get('distance', 0) / 1000)|round(2) }}</td>

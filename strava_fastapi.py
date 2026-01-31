@@ -1373,6 +1373,8 @@ async def training_log(request: Request, user: dict = Depends(get_current_user))
             'elevation_gain_m': round(elevation_m, 0),
             'average_heartrate': r.get('average_heartrate'),
             'calories': r.get('calories'),
+            'start_lat': r.get('start_lat'),
+            'start_lng': r.get('start_lng'),
         })
 
     # Collect unique activity types
@@ -1495,6 +1497,25 @@ async def locations_list(request: Request, user: dict = Depends(get_current_user
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
+    # Check for from_activity param to pre-fill the create form
+    prefill = None
+    from_activity = request.query_params.get('from_activity')
+    if from_activity:
+        cursor.execute("""
+            SELECT activity_id, name, start_lat, start_lng, start_date
+            FROM activities
+            WHERE user_id = ? AND activity_id = ? AND start_lat IS NOT NULL
+        """, (user_id, int(from_activity)))
+        act_row = cursor.fetchone()
+        if act_row:
+            prefill = {
+                'name': act_row['name'] or '',
+                'lat': act_row['start_lat'],
+                'lng': act_row['start_lng'],
+                'activity_id': act_row['activity_id'],
+                'date': (act_row['start_date'] or '')[:10],
+            }
+
     cursor.execute("""
         SELECT * FROM locations WHERE user_id = ? ORDER BY name ASC
     """, (user_id,))
@@ -1521,6 +1542,7 @@ async def locations_list(request: Request, user: dict = Depends(get_current_user
         "request": request,
         "user": user,
         "locations": locations,
+        "prefill": prefill,
     })
 
 

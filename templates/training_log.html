@@ -228,7 +228,6 @@
             white-space: nowrap;
             z-index: 20;
             text-shadow: none;
-            pointer-events: none;
         }
         .activity-bubble:hover .tooltip { display: block; }
 
@@ -534,11 +533,17 @@
                 const tip = document.createElement('div');
                 tip.className = 'tooltip';
                 const date = new Date(a.start_date);
-                tip.innerHTML = '<strong>' + escapeHtml(a.name) + '</strong><br>' +
+                let tipHtml = '<strong>' + escapeHtml(a.name) + '</strong><br>' +
                     a.type + ' &middot; ' + date.toLocaleDateString() + '<br>' +
                     a.distance_miles.toFixed(1) + ' mi / ' + a.distance_km.toFixed(1) + ' km<br>' +
                     a.moving_time_minutes.toFixed(0) + ' min' +
                     (a.average_heartrate ? ' &middot; ' + a.average_heartrate + ' bpm' : '');
+                if (a.start_lat && a.start_lng) {
+                    tipHtml += '<br><a href="/locations?from_activity=' + a.activity_id +
+                        '" style="color:#fc4c02;text-decoration:underline;pointer-events:auto;" ' +
+                        'onclick="event.stopPropagation();">Create Location</a>';
+                }
+                tip.innerHTML = tipHtml;
                 bubble.appendChild(tip);
 
                 const nameEl = document.createElement('div');

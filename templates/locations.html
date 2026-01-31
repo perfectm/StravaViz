@@ -126,13 +126,21 @@
 
     <main>
         <div class="container">
-            <section class="section">
+            <section class="section" id="create-form">
                 <h2>Create New Location</h2>
+                {% if prefill %}
+                <p style="color: #666; margin-bottom: 1rem;">
+                    Pre-filled from activity: <strong>{{ prefill.name }}</strong>
+                    {% if prefill.date %} ({{ prefill.date }}){% endif %}
+                </p>
+                {% endif %}
                 <form method="POST" action="/locations">
                     <div class="form-grid">
                         <div class="form-group">
                             <label for="name">Location Name *</label>
-                            <input type="text" id="name" name="name" required placeholder="e.g. Green Lake Loop">
+                            <input type="text" id="name" name="name" required
+                                   placeholder="e.g. Green Lake Loop"
+                                   value="{{ prefill.name if prefill else '' }}">
                         </div>
                         <div class="form-group">
                             <label for="radius_meters">Radius (meters)</label>
@@ -144,11 +152,15 @@
                         </div>
                         <div class="form-group">
                             <label for="center_lat">Latitude *</label>
-                            <input type="number" id="center_lat" name="center_lat" required step="any" placeholder="e.g. 47.6815">
+                            <input type="number" id="center_lat" name="center_lat" required step="any"
+                                   placeholder="e.g. 47.6815"
+                                   value="{{ prefill.lat if prefill else '' }}">
                         </div>
                         <div class="form-group">
                             <label for="center_lng">Longitude *</label>
-                            <input type="number" id="center_lng" name="center_lng" required step="any" placeholder="e.g. -122.3408">
+                            <input type="number" id="center_lng" name="center_lng" required step="any"
+                                   placeholder="e.g. -122.3408"
+                                   value="{{ prefill.lng if prefill else '' }}">
                         </div>
                         <div class="form-group checkbox-group">
                             <input type="checkbox" id="auto_tag" name="auto_tag" checked>
@@ -158,6 +170,9 @@
                     <button type="submit" class="btn btn-primary">Create Location</button>
                 </form>
             </section>
+            {% if prefill %}
+            <script>document.getElementById('create-form').scrollIntoView({behavior: 'smooth'});</script>
+            {% endif %}
 
             <section class="section">
                 <h2>My Locations</h2>

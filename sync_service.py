@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 STRAVA_TOKEN_URL = "https://www.strava.com/oauth/token"
 STRAVA_ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
 STRAVA_ACTIVITY_ZONES_URL = "https://www.strava.com/api/v3/activities/{activity_id}/zones"
+STRAVA_ACTIVITY_DETAIL_URL = "https://www.strava.com/api/v3/activities/{activity_id}"
 
 # Load environment
 CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
@@ -384,6 +385,151 @@ def sync_hr_zones_for_user(user_id: int, access_token: str, limit: int = 20) -> 
     return fetched_count
 
 
+def fetch_activity_segments(access_token: str, activity_id: int) -> Optional[list]:
+    """
+    Fetch segment efforts for a specific activity from Strava API.
+
+    Args:
+        access_token: Strava access token
+        activity_id: Strava activity ID
+
+    Returns:
+        List of segment effort dicts, or None on failure
+    """
+    try:
+        response = requests.get(
+            STRAVA_ACTIVITY_DETAIL_URL.format(activity_id=activity_id),
+            headers={'Authorization': f'Bearer {access_token}'},
+            timeout=10
+        )
+
+        if response.status_code == 429:
+            logger.warning("Rate limit hit while fetching activity detail for segments")
+            return None
+        elif response.status_code != 200:
+            logger.debug(f"Failed to fetch detail for activity {activity_id}: {response.status_code}")
+            return None
+
+        activity_data = response.json()
+        return activity_data.get('segment_efforts', [])
+
+    except Exception as e:
+        logger.debug(f"Error fetching segments for activity {activity_id}: {e}")
+        return None
+
+
+def sync_segments_for_user(user_id: int, access_token: str, limit: int = 10) -> int:
+    """
+    Fetch and store segment data for activities that haven't been processed yet.
+
+    Args:
+        user_id: User ID
+        access_token: Strava access token
+        limit: Max number of activity detail fetches per sync cycle
+
+    Returns:
+        Number of activities processed for segments
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Find activities where segments_fetched = 0
+    cursor.execute("""
+        SELECT activity_id
+        FROM activities
+        WHERE user_id = ?
+          AND segments_fetched = 0
+        ORDER BY start_date DESC
+        LIMIT ?
+    """, (user_id, limit))
+
+    activities_needing_segments = [row['activity_id'] for row in cursor.fetchall()]
+    conn.close()
+
+    if not activities_needing_segments:
+        return 0
+
+    processed_count = 0
+    for activity_id in activities_needing_segments:
+        segment_efforts = fetch_activity_segments(access_token, activity_id)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            if segment_efforts is None:
+                # API failure - don't mark as fetched, retry next cycle
+                conn.close()
+                continue
+
+            # Process each segment effort
+            for effort in segment_efforts:
+                segment = effort.get('segment', {})
+                strava_segment_id = segment.get('id')
+                if not strava_segment_id:
+                    continue
+
+                # Upsert segment master data
+                cursor.execute("""
+                    INSERT OR REPLACE INTO segments
+                    (strava_segment_id, name, distance, average_grade, maximum_grade,
+                     city, state, climb_category)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    strava_segment_id,
+                    segment.get('name', ''),
+                    segment.get('distance'),
+                    segment.get('average_grade'),
+                    segment.get('maximum_grade'),
+                    segment.get('city'),
+                    segment.get('state'),
+                    segment.get('climb_category', 0),
+                ))
+
+                # Insert effort record
+                strava_effort_id = effort.get('id')
+                if strava_effort_id:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO segment_efforts
+                        (user_id, activity_id, strava_segment_id, strava_effort_id,
+                         elapsed_time, moving_time, start_date, pr_rank, kom_rank,
+                         average_heartrate, max_heartrate, fetched_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        user_id,
+                        activity_id,
+                        strava_segment_id,
+                        strava_effort_id,
+                        effort.get('elapsed_time'),
+                        effort.get('moving_time'),
+                        effort.get('start_date'),
+                        effort.get('pr_rank'),
+                        effort.get('kom_rank'),
+                        effort.get('average_heartrate'),
+                        effort.get('max_heartrate'),
+                        datetime.now().isoformat(),
+                    ))
+
+            # Mark activity as processed regardless of segment count
+            cursor.execute("""
+                UPDATE activities SET segments_fetched = 1
+                WHERE user_id = ? AND activity_id = ?
+            """, (user_id, activity_id))
+
+            conn.commit()
+            processed_count += 1
+
+        except Exception as e:
+            logger.error(f"Error saving segments for activity {activity_id}: {e}")
+        finally:
+            conn.close()
+
+        # Small delay between API calls
+        time.sleep(0.3)
+
+    return processed_count
+
+
 def sync_user_activities(user_id: int) -> Tuple[int, Optional[str]]:
     """
     Synchronize activities for a specific user
@@ -450,6 +596,21 @@ def sync_user_activities(user_id: int) -> Tuple[int, Optional[str]]:
                 logger.info(f"User {user_id}: Fetched HR zones for {zones_count} activities")
     except Exception as e:
         logger.error(f"User {user_id}: Error syncing HR zones: {e}")
+
+    # Fetch segments for activities that haven't been processed yet (if tables exist)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='segments'")
+        has_segments_table = cursor.fetchone() is not None
+        conn.close()
+
+        if has_segments_table:
+            segments_count = sync_segments_for_user(user_id, user['access_token'])
+            if segments_count > 0:
+                logger.info(f"User {user_id}: Processed segments for {segments_count} activities")
+    except Exception as e:
+        logger.error(f"User {user_id}: Error syncing segments: {e}")
 
     return new_count, None
 

@@ -34,6 +34,7 @@ python migrations/003_add_kudos_tracking.py
 python migrations/004_add_activity_visibility.py
 python migrations/005_add_hr_zones.py
 python migrations/006_add_locations.py
+python migrations/007_add_segments.py
 
 # Check current schema
 python migrations/check_schema.py
@@ -43,7 +44,8 @@ python update_kudos.py          # Backfill kudos counts from Strava
 python update_visibility.py     # Backfill visibility settings from Strava (REQUIRED after migration 004)
 python backfill_hr_zones.py     # Backfill HR zone data from Strava (REQUIRED after migration 005)
 python backfill_coordinates.py  # Backfill GPS coordinates from Strava (REQUIRED after migration 006)
-# Note: New activities get visibility, HR zones, and coordinates automatically on sync
+python backfill_segments.py     # Backfill segment efforts from Strava (REQUIRED after migration 007)
+# Note: New activities get visibility, HR zones, coordinates, and segments automatically on sync
 ```
 
 ### Environment Setup
@@ -72,7 +74,8 @@ This application has evolved through multiple phases:
 5. **Phase 4** - Weekly trophies (migration 002) and kudos tracking (migration 003)
 6. **Phase 5** - Activity-level visibility/privacy (migration 004)
 7. **Phase 6** - Heart rate zone tracking (migration 005)
-8. **Current** - Location analysis with GPS tagging (migration 006)
+8. **Phase 7** - Location analysis with GPS tagging (migration 006)
+9. **Current** - Segment PR tracking (migration 007)
 
 ### Core Components
 
@@ -94,6 +97,7 @@ This application has evolved through multiple phases:
 - **Kudos Tracking**: Fetches and updates kudos counts for social engagement metrics
 - **Visibility Tracking**: Syncs activity privacy settings from Strava and updates existing activities
 - **HR Zone Tracking**: Fetches heart rate zone distribution for activities with HR data (up to 20 per sync cycle)
+- **Segment Tracking**: Fetches segment efforts from activity details for activities not yet processed (up to 10 per sync cycle)
 
 #### 3. Main Application (`strava_fastapi.py`)
 - **Framework**: FastAPI with Jinja2 templates
@@ -124,6 +128,9 @@ This application has evolved through multiple phases:
 /locations/{id}/untag     Remove activity tag (POST, requires auth)
 /locations/{id}/auto-tag  Auto-tag nearby activities (POST, requires auth)
 /api/locations/{id}/nearby  JSON: untagged activities sorted by distance
+
+/segments                  List user's segments with stats and PRs (requires auth)
+/segments/{strava_segment_id}  Segment detail: efforts, chart, stats
 ```
 
 ### Database Schema
@@ -177,6 +184,20 @@ This application has evolved through multiple phases:
 - `tagged_by` ('manual' or 'auto')
 - `created_at`
 - UNIQUE constraint: `(user_id, activity_id, location_id)`
+
+**activities** table also includes (added in migration 007):
+- `segments_fetched` (INTEGER DEFAULT 0) - Whether activity has been processed for segments
+
+**segments** - Global segment master data (not user-scoped)
+- `id` (PK), `strava_segment_id` (UNIQUE)
+- `name`, `distance`, `average_grade`, `maximum_grade`
+- `city`, `state`, `climb_category`
+
+**segment_efforts** - Per-user segment effort records
+- `id` (PK), `user_id` (FK), `activity_id`, `strava_segment_id` (FK)
+- `strava_effort_id`, `elapsed_time`, `moving_time`, `start_date`
+- `pr_rank`, `kom_rank`, `average_heartrate`, `max_heartrate`, `fetched_at`
+- UNIQUE constraint: `(user_id, strava_effort_id)`
 
 **club_memberships** - Club associations
 - `id` (PK), `user_id` (FK), `club_id`
@@ -341,6 +362,17 @@ This respects both user-wide privacy preferences and individual activity privacy
 - Privacy level selector (public/club_only/private)
 - Last sync timestamp
 - Logout option
+
+**segments.html** - Segment list page
+- Summary stats (total segments, efforts, PRs)
+- Recent PR highlights (last 30 days)
+- Sortable segment cards (by attempts, recent, name)
+
+**segment_detail.html** - Segment detail page
+- Segment info with Strava link
+- Performance stat cards (best/avg time, attempts, improvement %)
+- Time progression chart (matplotlib, y-axis inverted)
+- All efforts table with PR highlighting
 
 **error.html** - OAuth error handling
 - User-friendly error messages

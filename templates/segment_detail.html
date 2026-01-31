@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ segment.name }} - Strava Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6; color: #333; background-color: #f5f5f5;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        header {
+            background: linear-gradient(135deg, #fc4c02, #ff7043);
+            color: white; padding: 1rem 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .header-content { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.8rem; font-weight: bold; }
+        nav ul { list-style: none; display: flex; gap: 2rem; }
+        nav a {
+            color: white; text-decoration: none; padding: 0.5rem 1rem;
+            border-radius: 5px; transition: background-color 0.3s ease;
+        }
+        nav a:hover { background-color: rgba(255,255,255,0.2); }
+        .user-profile { display: flex; align-items: center; gap: 0.5rem; color: rgba(255,255,255,0.9); padding: 0.5rem 1rem; }
+        .profile-pic { width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); }
+        .profile-placeholder { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.3); display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+        main { padding: 2rem 0; }
+        .section {
+            background: white; margin: 2rem 0; padding: 2rem;
+            border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #fc4c02; margin-bottom: 1.5rem; font-size: 1.8rem;
+            border-bottom: 3px solid #fc4c02; padding-bottom: 0.5rem;
+        }
+
+        .segment-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+        .segment-info { flex: 1; }
+        .segment-info .meta-line { color: #666; font-size: 0.9rem; margin: 0.3rem 0; }
+        .segment-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+        .btn {
+            display: inline-block; padding: 8px 18px; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+            font-weight: 600; text-decoration: none; transition: all 0.2s;
+        }
+        .btn-secondary { background: #eee; color: #333; }
+        .btn-secondary:hover { background: #ddd; }
+
+        .badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+        .badge {
+            display: inline-block; padding: 2px 10px; border-radius: 12px;
+            font-size: 0.75rem; font-weight: 600;
+        }
+        .badge-climb { background: #fff3e0; color: #e65100; }
+        .badge-distance { background: #e3f2fd; color: #1565c0; }
+        .badge-grade { background: #f3e5f5; color: #7b1fa2; }
+
+        .overview-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem; margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; padding: 1.2rem; border-radius: 10px; text-align: center;
+        }
+        .stat-value { font-size: 1.6rem; font-weight: bold; margin-bottom: 0.3rem; }
+        .stat-label { font-size: 0.8rem; opacity: 0.9; }
+
+        .chart-container { text-align: center; margin: 1rem 0; }
+        .chart-container img { max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+
+        table {
+            width: 100%; border-collapse: collapse; background: white;
+            border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; color: #555; }
+        tr:hover { background-color: #f5f5f5; }
+        tr.best-row { background-color: #fff8e1; }
+        tr.best-row:hover { background-color: #fff3c4; }
+        .best-badge {
+            display: inline-block; padding: 1px 8px; border-radius: 10px;
+            font-size: 0.75rem; font-weight: 600;
+            background: #ffd54f; color: #795548;
+        }
+
+        @media (max-width: 768px) {
+            .header-content { flex-direction: column; gap: 1rem; }
+            nav ul { flex-wrap: wrap; gap: 1rem; }
+            .segment-header { flex-direction: column; }
+            .overview-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Strava Dashboard</div>
+                <nav>
+                    <ul>
+                        <li><a href="/dashboard">My Dashboard</a></li>
+                        <li><a href="/club">Club View</a></li>
+                        <li><a href="/training-log">Training Log</a></li>
+                        <li><a href="/locations">Locations</a></li>
+                        <li><a href="/segments">Segments</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">&#x1f464;</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <!-- Segment Header -->
+            <section class="section">
+                <div class="segment-header">
+                    <div class="segment-info">
+                        <h2 style="border: none; padding: 0; margin-bottom: 0.5rem;">{{ segment.name }}</h2>
+                        {% if segment.city or segment.state %}
+                        <p class="meta-line">{{ segment.city }}{% if segment.city and segment.state %}, {% endif %}{{ segment.state }}</p>
+                        {% endif %}
+                        <div class="badges">
+                            <span class="badge badge-distance">{{ segment.distance_km }} km / {{ segment.distance_miles }} mi</span>
+                            {% if segment.average_grade and segment.average_grade != 0 %}
+                            <span class="badge badge-grade">{{ segment.average_grade }}% avg / {{ segment.maximum_grade }}% max grade</span>
+                            {% endif %}
+                            {% if segment.climb_category_label %}
+                            <span class="badge badge-climb">{{ segment.climb_category_label }}</span>
+                            {% endif %}
+                        </div>
+                        <p class="meta-line" style="margin-top: 0.5rem;">
+                            <a href="https://www.strava.com/segments/{{ segment.strava_segment_id }}"
+                               target="_blank" rel="noopener"
+                               style="color: #fc4c02; text-decoration: none;">
+                               View on Strava &rarr;
+                            </a>
+                        </p>
+                    </div>
+                    <div class="segment-actions">
+                        <a href="/segments" class="btn btn-secondary">&larr; All Segments</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Stats -->
+            <section class="section">
+                <h2>Performance Summary</h2>
+                <div class="overview-grid">
+                    <div class="stat-card" style="background: linear-gradient(135deg, #11998e, #38ef7d);">
+                        <div class="stat-value">{{ stats.best_time_formatted }}</div>
+                        <div class="stat-label">Best Time</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #667eea, #764ba2);">
+                        <div class="stat-value">{{ stats.avg_time_formatted }}</div>
+                        <div class="stat-label">Average Time</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #f093fb, #f5576c);">
+                        <div class="stat-value">{{ stats.total_attempts }}</div>
+                        <div class="stat-label">Total Attempts</div>
+                    </div>
+                    {% if stats.improvement_pct %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #fa709a, #fee140);">
+                        <div class="stat-value">{{ stats.improvement_pct }}%</div>
+                        <div class="stat-label">Improvement</div>
+                    </div>
+                    {% endif %}
+                    {% if stats.best_hr %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #30cfd0, #330867);">
+                        <div class="stat-value">{{ stats.best_hr|int }}</div>
+                        <div class="stat-label">Best Avg HR</div>
+                    </div>
+                    {% endif %}
+                </div>
+            </section>
+
+            <!-- Time Progression Chart -->
+            {% if chart %}
+            <section class="section">
+                <h2>Time Progression</h2>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{{ chart }}" alt="Segment Time Progression Chart"/>
+                </div>
+            </section>
+            {% endif %}
+
+            <!-- Efforts Table -->
+            <section class="section">
+                <h2>All Efforts ({{ efforts|length }})</h2>
+                {% if efforts %}
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Activity</th>
+                                <th>Type</th>
+                                <th>Elapsed Time</th>
+                                <th>Moving Time</th>
+                                <th>Avg HR</th>
+                                <th>PR Rank</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for e in efforts %}
+                            <tr class="{{ 'best-row' if e.is_best }}">
+                                <td>{{ e.date_str }}</td>
+                                <td>{{ e.activity_name or '' }}</td>
+                                <td>{{ e.activity_type or '' }}</td>
+                                <td>{{ e.elapsed_time_formatted }}</td>
+                                <td>{{ e.moving_time_formatted }}</td>
+                                <td>{{ e.average_heartrate|round(0)|int if e.average_heartrate else '' }}</td>
+                                <td>{{ e.pr_rank if e.pr_rank else '' }}</td>
+                                <td>{% if e.is_best %}<span class="best-badge">PR</span>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p style="color: #999; text-align: center; padding: 2rem;">No efforts recorded for this segment.</p>
+                {% endif %}
+            </section>
+        </div>
+    </main>
+</body>
+</html>

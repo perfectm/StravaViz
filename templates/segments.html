@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Segments - Strava Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6; color: #333; background-color: #f5f5f5;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        header {
+            background: linear-gradient(135deg, #fc4c02, #ff7043);
+            color: white; padding: 1rem 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .header-content { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.8rem; font-weight: bold; }
+        nav ul { list-style: none; display: flex; gap: 2rem; }
+        nav a {
+            color: white; text-decoration: none; padding: 0.5rem 1rem;
+            border-radius: 5px; transition: background-color 0.3s ease;
+        }
+        nav a:hover { background-color: rgba(255,255,255,0.2); }
+        .user-profile { display: flex; align-items: center; gap: 0.5rem; color: rgba(255,255,255,0.9); padding: 0.5rem 1rem; }
+        .profile-pic { width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); }
+        .profile-placeholder { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.3); display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+        main { padding: 2rem 0; }
+        .section {
+            background: white; margin: 2rem 0; padding: 2rem;
+            border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #fc4c02; margin-bottom: 1.5rem; font-size: 1.8rem;
+            border-bottom: 3px solid #fc4c02; padding-bottom: 0.5rem;
+        }
+
+        .overview-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem; margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; padding: 1.2rem; border-radius: 10px; text-align: center;
+        }
+        .stat-value { font-size: 1.6rem; font-weight: bold; margin-bottom: 0.3rem; }
+        .stat-label { font-size: 0.8rem; opacity: 0.9; }
+
+        .pr-highlights {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem; margin-bottom: 1rem;
+        }
+        .pr-card {
+            background: linear-gradient(135deg, #ffecd2, #fcb69f);
+            border: 2px solid #f5a623; border-radius: 10px; padding: 1.2rem;
+        }
+        .pr-card .trophy { font-size: 1.5rem; margin-bottom: 0.3rem; }
+        .pr-card .name { font-weight: 700; font-size: 1rem; margin-bottom: 0.3rem; }
+        .pr-card .details { font-size: 0.85rem; color: #555; }
+
+        .sort-bar {
+            display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem;
+            font-size: 0.9rem;
+        }
+        .sort-bar label { font-weight: 600; color: #555; }
+        .sort-bar a {
+            padding: 6px 14px; border-radius: 20px; text-decoration: none;
+            font-weight: 600; font-size: 0.85rem;
+            border: 2px solid #ddd; color: #666; background: #f8f8f8;
+            transition: all 0.15s;
+        }
+        .sort-bar a.active { border-color: #fc4c02; color: #fc4c02; background: white; }
+        .sort-bar a:hover { border-color: #fc4c02; }
+
+        .segment-cards {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+        .segment-card {
+            background: #fafafa; border: 1px solid #eee; border-radius: 10px;
+            padding: 1.5rem; transition: box-shadow 0.2s;
+        }
+        .segment-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .segment-card h3 { margin-bottom: 0.3rem; }
+        .segment-card h3 a { color: #333; text-decoration: none; }
+        .segment-card h3 a:hover { color: #fc4c02; }
+        .segment-card .location { color: #999; font-size: 0.85rem; margin-bottom: 0.5rem; }
+        .segment-card .badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+        .badge {
+            display: inline-block; padding: 2px 10px; border-radius: 12px;
+            font-size: 0.75rem; font-weight: 600;
+        }
+        .badge-climb { background: #fff3e0; color: #e65100; }
+        .badge-distance { background: #e3f2fd; color: #1565c0; }
+        .badge-grade { background: #f3e5f5; color: #7b1fa2; }
+        .segment-card .meta {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+            font-size: 0.85rem; color: #555;
+        }
+        .segment-card .meta strong { color: #333; }
+
+        .empty-state {
+            text-align: center; padding: 3rem; color: #999;
+        }
+        .empty-state p { margin-top: 0.5rem; }
+
+        @media (max-width: 768px) {
+            .header-content { flex-direction: column; gap: 1rem; }
+            nav ul { flex-wrap: wrap; gap: 1rem; }
+            .segment-cards { grid-template-columns: 1fr; }
+            .pr-highlights { grid-template-columns: 1fr; }
+            .overview-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Strava Dashboard</div>
+                <nav>
+                    <ul>
+                        <li><a href="/dashboard">My Dashboard</a></li>
+                        <li><a href="/club">Club View</a></li>
+                        <li><a href="/training-log">Training Log</a></li>
+                        <li><a href="/locations">Locations</a></li>
+                        <li><a href="/segments">Segments</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">&#x1f464;</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <!-- Summary Stats -->
+            <section class="section">
+                <h2>Segment Overview</h2>
+                <div class="overview-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ total_segments }}</div>
+                        <div class="stat-label">Segments</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #11998e, #38ef7d);">
+                        <div class="stat-value">{{ total_efforts }}</div>
+                        <div class="stat-label">Total Efforts</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #fa709a, #fee140);">
+                        <div class="stat-value">{{ segments_with_prs }}</div>
+                        <div class="stat-label">Segments with PRs</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- PR Highlights -->
+            {% if pr_highlights %}
+            <section class="section">
+                <h2>Recent PRs (Last 30 Days)</h2>
+                <div class="pr-highlights">
+                    {% for pr in pr_highlights %}
+                    <div class="pr-card">
+                        <div class="trophy">&#x1f3c6;</div>
+                        <div class="name"><a href="/segments/{{ pr.strava_segment_id }}" style="color: inherit; text-decoration: none;">{{ pr.name }}</a></div>
+                        <div class="details">
+                            {{ pr.elapsed_time_formatted }} &middot;
+                            {{ pr.distance_km }} km &middot;
+                            {{ pr.start_date[:10] if pr.start_date else '' }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
+
+            <!-- Segment List -->
+            <section class="section">
+                <h2>All Segments</h2>
+
+                {% if segments %}
+                <div class="sort-bar">
+                    <label>Sort by:</label>
+                    <a href="/segments?sort=attempts" class="{{ 'active' if sort == 'attempts' }}">Most Attempts</a>
+                    <a href="/segments?sort=recent" class="{{ 'active' if sort == 'recent' }}">Recent</a>
+                    <a href="/segments?sort=name" class="{{ 'active' if sort == 'name' }}">Name</a>
+                </div>
+
+                <div class="segment-cards">
+                    {% for seg in segments %}
+                    <div class="segment-card">
+                        <h3><a href="/segments/{{ seg.strava_segment_id }}">{{ seg.name }}</a></h3>
+                        {% if seg.city or seg.state %}
+                        <div class="location">{{ seg.city }}{% if seg.city and seg.state %}, {% endif %}{{ seg.state }}</div>
+                        {% endif %}
+                        <div class="badges">
+                            <span class="badge badge-distance">{{ seg.distance_km }} km</span>
+                            {% if seg.average_grade and seg.average_grade != 0 %}
+                            <span class="badge badge-grade">{{ seg.average_grade }}% grade</span>
+                            {% endif %}
+                            {% if seg.climb_category_label %}
+                            <span class="badge badge-climb">{{ seg.climb_category_label }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="meta">
+                            <div><strong>{{ seg.attempt_count }}</strong> attempts</div>
+                            <div>Best: <strong>{{ seg.best_time_formatted }}</strong></div>
+                            {% if seg.last_attempt %}
+                            <div>Last: <strong>{{ seg.last_attempt[:10] }}</strong></div>
+                            {% endif %}
+                            {% if seg.first_attempt %}
+                            <div>First: <strong>{{ seg.first_attempt[:10] }}</strong></div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <h3>No segments yet</h3>
+                    <p>Segment data is fetched automatically when your activities sync. If you just connected your account, segments will appear after the next sync cycle.</p>
+                    <p style="margin-top: 0.5rem;">You can trigger a manual sync from your <a href="/dashboard" style="color: #fc4c02;">dashboard</a>.</p>
+                </div>
+                {% endif %}
+            </section>
+        </div>
+    </main>
+</body>
+</html>

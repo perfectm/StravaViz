@@ -1914,4 +1914,296 @@ async def nearby_activities(request: Request, location_id: int, user: dict = Dep
     return JSONResponse({"nearby": results[:50]})
 
 
+# ============================================================================
+# Segment PR Tracking Routes
+# ============================================================================
+
+def format_segment_time(seconds):
+    """Format seconds as H:MM:SS or M:SS string."""
+    if seconds is None:
+        return "N/A"
+    seconds = int(seconds)
+    if seconds >= 3600:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    minutes = seconds // 60
+    secs = seconds % 60
+    return f"{minutes}:{secs:02d}"
+
+
+def _generate_segment_chart(efforts, segment_name):
+    """Generate a time-progression line chart for segment efforts."""
+    type_colors = {'Walk': '#4CAF50', 'Hike': '#FF9800', 'Run': '#2196F3', 'Ride': '#9C27B0'}
+
+    # Group by activity type
+    by_type = {}
+    best_time = None
+    best_date = None
+
+    for e in efforts:
+        elapsed = e.get('elapsed_time')
+        start = e.get('start_date', '')
+        atype = e.get('activity_type', 'Other')
+
+        if elapsed and elapsed > 0 and start:
+            try:
+                dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                by_type.setdefault(atype, {'dates': [], 'times': [], 'is_best': []})
+                by_type[atype]['dates'].append(dt)
+                by_type[atype]['times'].append(elapsed)
+
+                if best_time is None or elapsed < best_time:
+                    best_time = elapsed
+                    best_date = dt
+            except (ValueError, TypeError):
+                continue
+
+    # Mark best effort
+    for atype, data in by_type.items():
+        for i, (d, t) in enumerate(zip(data['dates'], data['times'])):
+            data['is_best'].append(t == best_time and d == best_date)
+
+    total_points = sum(len(v['dates']) for v in by_type.values())
+    if total_points < 2:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+
+    for atype, data in sorted(by_type.items()):
+        color = type_colors.get(atype, '#666666')
+        # Convert seconds to minutes for display
+        times_min = [t / 60 for t in data['times']]
+        ax.plot(data['dates'], times_min, 'o-', color=color,
+                linewidth=2, markersize=6, label=atype)
+
+        # Highlight best effort with star
+        for i, is_best in enumerate(data['is_best']):
+            if is_best:
+                ax.plot(data['dates'][i], times_min[i], '*', color='gold',
+                        markersize=18, markeredgecolor=color, markeredgewidth=1.5,
+                        zorder=5)
+
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Time (minutes)')
+    ax.set_title(f'Time Progression — {segment_name}')
+    ax.invert_yaxis()  # faster (lower time) = higher on chart
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    fig.autofmt_xdate()
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='best')
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
+@app.get("/segments", response_class=HTMLResponse)
+async def segments_list(request: Request, user: dict = Depends(get_current_user)):
+    """List all segments the user has run, with stats and PR highlights."""
+    user_id = user['id']
+    sort = request.query_params.get('sort', 'attempts')
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # Check if tables exist
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='segments'")
+    if not cursor.fetchone():
+        conn.close()
+        return templates.TemplateResponse("segments.html", {
+            "request": request,
+            "user": user,
+            "segments": [],
+            "pr_highlights": [],
+            "total_segments": 0,
+            "total_efforts": 0,
+            "segments_with_prs": 0,
+            "sort": sort,
+        })
+
+    # Get all segments the user has efforts on
+    cursor.execute("""
+        SELECT
+            s.strava_segment_id,
+            s.name,
+            s.distance,
+            s.average_grade,
+            s.maximum_grade,
+            s.city,
+            s.state,
+            s.climb_category,
+            COUNT(se.id) as attempt_count,
+            MIN(se.elapsed_time) as best_time,
+            MAX(se.start_date) as last_attempt,
+            MIN(se.start_date) as first_attempt
+        FROM segments s
+        INNER JOIN segment_efforts se ON s.strava_segment_id = se.strava_segment_id
+        WHERE se.user_id = ?
+        GROUP BY s.strava_segment_id
+    """, (user_id,))
+
+    segments_rows = cursor.fetchall()
+    segments = [dict(r) for r in segments_rows]
+
+    # Format each segment
+    for seg in segments:
+        seg['distance_km'] = round((seg['distance'] or 0) / 1000, 2)
+        seg['distance_miles'] = round((seg['distance'] or 0) / 1609.344, 2)
+        seg['best_time_formatted'] = format_segment_time(seg['best_time'])
+        seg['climb_category_label'] = {0: '', 1: 'Cat 4', 2: 'Cat 3', 3: 'Cat 2', 4: 'Cat 1', 5: 'HC'}.get(seg['climb_category'], '')
+
+    # Sort
+    if sort == 'recent':
+        segments.sort(key=lambda s: s['last_attempt'] or '', reverse=True)
+    elif sort == 'name':
+        segments.sort(key=lambda s: (s['name'] or '').lower())
+    else:  # attempts (default)
+        segments.sort(key=lambda s: s['attempt_count'], reverse=True)
+
+    # PR highlights: segments where user got pr_rank=1 in last 30 days
+    thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+    cursor.execute("""
+        SELECT
+            s.strava_segment_id,
+            s.name,
+            s.distance,
+            se.elapsed_time,
+            se.start_date,
+            se.pr_rank
+        FROM segment_efforts se
+        INNER JOIN segments s ON se.strava_segment_id = s.strava_segment_id
+        WHERE se.user_id = ?
+          AND se.pr_rank = 1
+          AND se.start_date >= ?
+        ORDER BY se.start_date DESC
+    """, (user_id, thirty_days_ago))
+
+    pr_highlights = []
+    for row in cursor.fetchall():
+        pr = dict(row)
+        pr['elapsed_time_formatted'] = format_segment_time(pr['elapsed_time'])
+        pr['distance_km'] = round((pr['distance'] or 0) / 1000, 2)
+        pr_highlights.append(pr)
+
+    # Summary stats
+    total_segments = len(segments)
+    total_efforts = sum(s['attempt_count'] for s in segments)
+
+    cursor.execute("""
+        SELECT COUNT(DISTINCT strava_segment_id) as count
+        FROM segment_efforts
+        WHERE user_id = ? AND pr_rank = 1
+    """, (user_id,))
+    segments_with_prs = cursor.fetchone()['count']
+
+    conn.close()
+
+    return templates.TemplateResponse("segments.html", {
+        "request": request,
+        "user": user,
+        "segments": segments,
+        "pr_highlights": pr_highlights,
+        "total_segments": total_segments,
+        "total_efforts": total_efforts,
+        "segments_with_prs": segments_with_prs,
+        "sort": sort,
+    })
+
+
+@app.get("/segments/{strava_segment_id}", response_class=HTMLResponse)
+async def segment_detail(request: Request, strava_segment_id: int, user: dict = Depends(get_current_user)):
+    """Detail page for a specific segment showing all efforts and time progression."""
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # Get segment info
+    cursor.execute("SELECT * FROM segments WHERE strava_segment_id = ?", (strava_segment_id,))
+    segment = cursor.fetchone()
+
+    if not segment:
+        conn.close()
+        return RedirectResponse(url="/segments", status_code=303)
+
+    segment = dict(segment)
+    segment['distance_km'] = round((segment['distance'] or 0) / 1000, 2)
+    segment['distance_miles'] = round((segment['distance'] or 0) / 1609.344, 2)
+    segment['climb_category_label'] = {0: '', 1: 'Cat 4', 2: 'Cat 3', 3: 'Cat 2', 4: 'Cat 1', 5: 'HC'}.get(segment['climb_category'], '')
+
+    # Get all efforts for this user on this segment
+    cursor.execute("""
+        SELECT se.*, a.type as activity_type, a.name as activity_name
+        FROM segment_efforts se
+        LEFT JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
+        WHERE se.user_id = ? AND se.strava_segment_id = ?
+        ORDER BY se.start_date DESC
+    """, (user_id, strava_segment_id))
+
+    efforts_rows = cursor.fetchall()
+    efforts = [dict(r) for r in efforts_rows]
+    conn.close()
+
+    if not efforts:
+        return RedirectResponse(url="/segments", status_code=303)
+
+    # Compute stats
+    elapsed_times = [e['elapsed_time'] for e in efforts if e.get('elapsed_time') and e['elapsed_time'] > 0]
+    best_time = min(elapsed_times) if elapsed_times else None
+    avg_time = sum(elapsed_times) / len(elapsed_times) if elapsed_times else None
+    total_attempts = len(efforts)
+
+    # Improvement: first attempt vs best
+    improvement_pct = None
+    chronological = sorted(
+        [e for e in efforts if e.get('elapsed_time') and e['elapsed_time'] > 0],
+        key=lambda e: e['start_date'] or ''
+    )
+    if len(chronological) >= 2 and chronological[0]['elapsed_time'] > 0:
+        first_time = chronological[0]['elapsed_time']
+        if best_time and first_time > best_time:
+            improvement_pct = round((1 - best_time / first_time) * 100, 1)
+
+    # Best HR
+    heartrates = [e['average_heartrate'] for e in efforts if e.get('average_heartrate')]
+    best_hr = min(heartrates) if heartrates else None
+
+    stats = {
+        'best_time': best_time,
+        'best_time_formatted': format_segment_time(best_time),
+        'avg_time': avg_time,
+        'avg_time_formatted': format_segment_time(int(avg_time)) if avg_time else 'N/A',
+        'total_attempts': total_attempts,
+        'improvement_pct': improvement_pct,
+        'best_hr': round(best_hr, 0) if best_hr else None,
+    }
+
+    # Format efforts for display
+    for e in efforts:
+        e['elapsed_time_formatted'] = format_segment_time(e.get('elapsed_time'))
+        e['moving_time_formatted'] = format_segment_time(e.get('moving_time'))
+        e['is_best'] = (e.get('elapsed_time') == best_time) if best_time else False
+        e['date_str'] = (e.get('start_date') or '')[:10]
+
+    # Generate chart
+    chart = _generate_segment_chart(efforts, segment['name'])
+
+    return templates.TemplateResponse("segment_detail.html", {
+        "request": request,
+        "user": user,
+        "segment": segment,
+        "stats": stats,
+        "efforts": efforts,
+        "chart": chart,
+    })
+
+
 # To run: uvicorn strava_fastapi:app --reload

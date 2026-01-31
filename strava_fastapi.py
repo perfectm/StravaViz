@@ -1652,29 +1652,38 @@ async def location_detail(request: Request, location_id: int, user: dict = Depen
 
 
 def _generate_timeline_chart(activities, location_name):
-    """Generate a pace-over-time chart for a location's tagged activities."""
-    dates = []
-    paces = []
-
+    """Generate a pace-over-time chart for a location's tagged activities, split by type."""
+    type_colors = {'Walk': '#4CAF50', 'Hike': '#FF9800', 'Run': '#2196F3', 'Ride': '#9C27B0'}
+    # Group by activity type
+    by_type = {}
     for a in reversed(activities):  # chronological order
         dist = a.get('distance') or 0
         mt = a.get('moving_time') or 0
         start = a.get('start_date', '')
+        atype = a.get('type', 'Other')
 
         if dist > 0 and mt > 0 and start:
             try:
                 dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
                 pace = (mt / 60) / (dist / 1000)  # min/km
-                dates.append(dt)
-                paces.append(pace)
+                by_type.setdefault(atype, {'dates': [], 'paces': []})
+                by_type[atype]['dates'].append(dt)
+                by_type[atype]['paces'].append(pace)
             except (ValueError, TypeError):
                 continue
 
-    if len(dates) < 2:
+    # Need at least 2 data points across any type
+    total_points = sum(len(v['dates']) for v in by_type.values())
+    if total_points < 2:
         return None
 
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(dates, paces, 'o-', color='#fc4c02', linewidth=2, markersize=6)
+
+    for atype, data in sorted(by_type.items()):
+        color = type_colors.get(atype, '#666666')
+        ax.plot(data['dates'], data['paces'], 'o-', color=color,
+                linewidth=2, markersize=6, label=atype)
+
     ax.set_xlabel('Date')
     ax.set_ylabel('Pace (min/km)')
     ax.set_title(f'Pace Over Time — {location_name}')
@@ -1683,6 +1692,7 @@ def _generate_timeline_chart(activities, location_name):
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())
     fig.autofmt_xdate()
     ax.grid(True, alpha=0.3)
+    ax.legend(loc='best')
 
     plt.tight_layout()
     buf = io.BytesIO()

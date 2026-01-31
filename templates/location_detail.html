@@ -350,7 +350,7 @@
                     </span>
                 </div>
 
-                <h3 style="margin-bottom: 1rem;">Nearby Untagged Activities</h3>
+                <h3 style="margin-bottom: 1rem;">Nearby Activities Not Tagged Here</h3>
                 <div id="nearby-list" class="nearby-list">
                     <p style="color: #999;">Loading nearby activities...</p>
                 </div>
@@ -367,7 +367,7 @@
             .then(r => r.json())
             .then(data => {
                 if (!data.nearby || data.nearby.length === 0) {
-                    container.innerHTML = '<p style="color: #999;">No nearby untagged activities found.</p>';
+                    container.innerHTML = '<p style="color: #999;">No nearby activities found that aren\'t already tagged here.</p>';
                     return;
                 }
 

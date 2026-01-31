@@ -113,6 +113,24 @@
         .toggle-section.active { display: block; }
         .toggle-btn { cursor: pointer; color: #fc4c02; font-weight: 600; }
 
+        .type-filter { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+        .type-filter label { font-weight: 600; color: #555; font-size: 0.9rem; white-space: nowrap; }
+        .type-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .type-chip {
+            display: flex; align-items: center; gap: 4px;
+            padding: 6px 14px; border-radius: 20px; cursor: pointer;
+            font-size: 0.85rem; font-weight: 600;
+            border: 2px solid #ddd; background: #f8f8f8; color: #666;
+            transition: all 0.15s; user-select: none;
+        }
+        .type-chip input { display: none; }
+        .type-chip.checked { border-color: currentColor; background: white; }
+        .type-chip[data-type="Walk"] { --chip-color: #4CAF50; }
+        .type-chip[data-type="Hike"] { --chip-color: #FF9800; }
+        .type-chip[data-type="Run"] { --chip-color: #2196F3; }
+        .type-chip[data-type="Ride"] { --chip-color: #9C27B0; }
+        .type-chip.checked { color: var(--chip-color); border-color: var(--chip-color); }
+
         @media (max-width: 768px) {
             .header-content { flex-direction: column; gap: 1rem; }
             nav ul { flex-wrap: wrap; gap: 1rem; }
@@ -207,6 +225,27 @@
                     </form>
                 </div>
             </section>
+
+            <!-- Activity Type Filter -->
+            {% if available_types|length > 1 %}
+            <section class="section" style="padding: 1.2rem 2rem;">
+                <form id="type-filter-form" method="GET" action="/locations/{{ location.id }}">
+                    <div class="type-filter">
+                        <label>Activity Types:</label>
+                        <div class="type-chips">
+                            {% for t in available_types %}
+                            <label class="type-chip {{ 'checked' if t in selected_types }}" data-type="{{ t }}">
+                                <input type="checkbox" name="types" value="{{ t }}"
+                                       {{ 'checked' if t in selected_types }}
+                                       onchange="this.closest('form').submit()">
+                                {{ t }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </form>
+            </section>
+            {% endif %}
 
             <!-- Stats -->
             <section class="section">

@@ -1606,7 +1606,7 @@ async def location_detail(request: Request, location_id: int, user: dict = Depen
 
     location = dict(location)
 
-    # Get tagged activities
+    # Get ALL tagged activities (unfiltered) to determine available types
     cursor.execute("""
         SELECT a.*, al.tagged_by, al.created_at as tagged_at
         FROM activities a
@@ -1614,9 +1614,21 @@ async def location_detail(request: Request, location_id: int, user: dict = Depen
         WHERE al.location_id = ? AND al.user_id = ?
         ORDER BY a.start_date DESC
     """, (location_id, user_id))
-    tagged_activities = [dict(r) for r in cursor.fetchall()]
+    all_tagged = [dict(r) for r in cursor.fetchall()]
 
-    # Compute stats
+    # Determine available activity types from tagged activities
+    available_types = sorted(set(a.get('type', '') for a in all_tagged if a.get('type')))
+
+    # Parse type filter from query params (?types=Walk&types=Run)
+    selected_types = request.query_params.getlist('types')
+    if not selected_types:
+        # Default: all available types
+        selected_types = available_types
+
+    # Filter to selected types
+    tagged_activities = [a for a in all_tagged if a.get('type') in selected_types]
+
+    # Compute stats on filtered activities
     stats = compute_location_stats(tagged_activities)
     stats['best_pace_formatted'] = format_pace(stats['best_pace_min_km'])
     stats['avg_pace_formatted'] = format_pace(stats['avg_pace_min_km'])
@@ -1648,6 +1660,8 @@ async def location_detail(request: Request, location_id: int, user: dict = Depen
         "stats": stats,
         "tagged_activities": tagged_activities,
         "timeline_chart": timeline_chart,
+        "available_types": available_types,
+        "selected_types": selected_types,
     })
 
 

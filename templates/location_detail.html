@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ location.name }} - Strava Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6; color: #333; background-color: #f5f5f5;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        header {
+            background: linear-gradient(135deg, #fc4c02, #ff7043);
+            color: white; padding: 1rem 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .header-content { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.8rem; font-weight: bold; }
+        nav ul { list-style: none; display: flex; gap: 2rem; }
+        nav a {
+            color: white; text-decoration: none; padding: 0.5rem 1rem;
+            border-radius: 5px; transition: background-color 0.3s ease;
+        }
+        nav a:hover { background-color: rgba(255,255,255,0.2); }
+        .user-profile { display: flex; align-items: center; gap: 0.5rem; color: rgba(255,255,255,0.9); padding: 0.5rem 1rem; }
+        .profile-pic { width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); }
+        .profile-placeholder { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.3); display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+        main { padding: 2rem 0; }
+        .section {
+            background: white; margin: 2rem 0; padding: 2rem;
+            border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #fc4c02; margin-bottom: 1.5rem; font-size: 1.8rem;
+            border-bottom: 3px solid #fc4c02; padding-bottom: 0.5rem;
+        }
+
+        .location-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+        .location-info { flex: 1; }
+        .location-info .desc { color: #666; margin: 0.5rem 0 1rem; }
+        .location-info .coords { font-size: 0.85rem; color: #999; }
+        .location-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+        .btn {
+            display: inline-block; padding: 8px 18px; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+            font-weight: 600; text-decoration: none; transition: all 0.2s;
+        }
+        .btn-primary { background: #fc4c02; color: white; }
+        .btn-primary:hover { background: #e04400; }
+        .btn-secondary { background: #eee; color: #333; }
+        .btn-secondary:hover { background: #ddd; }
+        .btn-danger { background: #f44336; color: white; }
+        .btn-danger:hover { background: #d32f2f; }
+        .btn-sm { padding: 4px 12px; font-size: 0.8rem; }
+
+        .overview-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 1rem; margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; padding: 1.2rem; border-radius: 10px; text-align: center;
+        }
+        .stat-value { font-size: 1.6rem; font-weight: bold; margin-bottom: 0.3rem; }
+        .stat-label { font-size: 0.8rem; opacity: 0.9; }
+
+        .chart-container { text-align: center; margin: 1rem 0; }
+        .chart-container img { max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+
+        table {
+            width: 100%; border-collapse: collapse; background: white;
+            border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; color: #555; }
+        tr:hover { background-color: #f5f5f5; }
+
+        .form-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;
+        }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group.full-width { grid-column: 1 / -1; }
+        .form-group label { font-weight: 600; margin-bottom: 4px; font-size: 0.9rem; color: #555; }
+        .form-group input, .form-group textarea {
+            padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 1rem; font-family: inherit;
+        }
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none; border-color: #fc4c02; box-shadow: 0 0 0 2px rgba(252,76,2,0.15);
+        }
+        .form-group textarea { resize: vertical; min-height: 60px; }
+
+        .nearby-list { margin-top: 1rem; }
+        .nearby-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 14px; border-bottom: 1px solid #eee;
+        }
+        .nearby-item:last-child { border-bottom: none; }
+        .nearby-item .info { flex: 1; }
+        .nearby-item .name { font-weight: 600; }
+        .nearby-item .meta { font-size: 0.85rem; color: #777; }
+        .nearby-item .distance-badge {
+            font-size: 0.8rem; padding: 2px 8px; border-radius: 12px;
+            font-weight: 600; margin-right: 8px;
+        }
+        .nearby-item .distance-badge.within { background: #e8f5e9; color: #2e7d32; }
+        .nearby-item .distance-badge.outside { background: #fff3e0; color: #e65100; }
+
+        .toggle-section { display: none; }
+        .toggle-section.active { display: block; }
+        .toggle-btn { cursor: pointer; color: #fc4c02; font-weight: 600; }
+
+        @media (max-width: 768px) {
+            .header-content { flex-direction: column; gap: 1rem; }
+            nav ul { flex-wrap: wrap; gap: 1rem; }
+            .form-grid { grid-template-columns: 1fr; }
+            .location-header { flex-direction: column; }
+            .overview-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Strava Dashboard</div>
+                <nav>
+                    <ul>
+                        <li><a href="/dashboard">My Dashboard</a></li>
+                        <li><a href="/club">Club View</a></li>
+                        <li><a href="/training-log">Training Log</a></li>
+                        <li><a href="/locations">Locations</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">&#x1f464;</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <!-- Location Header -->
+            <section class="section">
+                <div class="location-header">
+                    <div class="location-info">
+                        <h2 style="border: none; padding: 0; margin-bottom: 0.5rem;">{{ location.name }}</h2>
+                        {% if location.description %}
+                        <p class="desc">{{ location.description }}</p>
+                        {% endif %}
+                        <p class="coords">
+                            {{ location.center_lat }}, {{ location.center_lng }} &middot;
+                            Radius: {{ location.radius_meters|int }}m
+                        </p>
+                    </div>
+                    <div class="location-actions">
+                        <a href="/locations" class="btn btn-secondary">&larr; All Locations</a>
+                        <button class="btn btn-secondary" onclick="document.getElementById('edit-section').classList.toggle('active')">Edit</button>
+                        <form method="POST" action="/locations/{{ location.id }}/delete"
+                              onsubmit="return confirm('Delete this location and all its activity tags?');"
+                              style="display:inline;">
+                            <button type="submit" class="btn btn-danger">Delete</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Edit Form (hidden by default) -->
+                <div id="edit-section" class="toggle-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #eee;">
+                    <h3 style="margin-bottom: 1rem;">Edit Location</h3>
+                    <form method="POST" action="/locations/{{ location.id }}/edit">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label for="edit_name">Name</label>
+                                <input type="text" id="edit_name" name="name" value="{{ location.name }}" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="edit_radius">Radius (meters)</label>
+                                <input type="number" id="edit_radius" name="radius_meters" value="{{ location.radius_meters|int }}" min="50" max="50000" step="50">
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="edit_desc">Description</label>
+                                <textarea id="edit_desc" name="description">{{ location.description or '' }}</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="edit_lat">Latitude</label>
+                                <input type="number" id="edit_lat" name="center_lat" value="{{ location.center_lat }}" step="any" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="edit_lng">Longitude</label>
+                                <input type="number" id="edit_lng" name="center_lng" value="{{ location.center_lng }}" step="any" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Stats -->
+            <section class="section">
+                <h2>Performance Summary</h2>
+                <div class="overview-grid">
+                    <div class="stat-card">
+                        <div class="stat-value">{{ stats.visit_count }}</div>
+                        <div class="stat-label">Visits</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #11998e, #38ef7d);">
+                        <div class="stat-value">{{ stats.best_pace_formatted }}</div>
+                        <div class="stat-label">Best Pace (min/km)</div>
+                    </div>
+                    <div class="stat-card" style="background: linear-gradient(135deg, #f093fb, #f5576c);">
+                        <div class="stat-value">{{ stats.avg_pace_formatted }}</div>
+                        <div class="stat-label">Avg Pace (min/km)</div>
+                    </div>
+                    {% if stats.best_time_minutes %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #fa709a, #fee140);">
+                        <div class="stat-value">{{ stats.best_time_minutes }}</div>
+                        <div class="stat-label">Best Time (min)</div>
+                    </div>
+                    {% endif %}
+                    {% if stats.avg_time_minutes %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #30cfd0, #330867);">
+                        <div class="stat-value">{{ stats.avg_time_minutes }}</div>
+                        <div class="stat-label">Avg Time (min)</div>
+                    </div>
+                    {% endif %}
+                    <div class="stat-card" style="background: linear-gradient(135deg, #a8edea, #fed6e3); color: #333;">
+                        <div class="stat-value">{{ stats.total_elevation|int }}m</div>
+                        <div class="stat-label">Total Elevation</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Timeline Chart -->
+            {% if timeline_chart %}
+            <section class="section">
+                <h2>Pace Over Time</h2>
+                <div class="chart-container">
+                    <img src="data:image/png;base64,{{ timeline_chart }}" alt="Pace Timeline Chart"/>
+                </div>
+            </section>
+            {% endif %}
+
+            <!-- Tagged Activities -->
+            <section class="section">
+                <h2>Tagged Activities ({{ tagged_activities|length }})</h2>
+                {% if tagged_activities %}
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Distance</th>
+                                <th>Time (min)</th>
+                                <th>Pace</th>
+                                <th>Elev (ft)</th>
+                                <th>Tagged</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for a in tagged_activities %}
+                            <tr>
+                                <td>{{ a.start_date[:10] if a.start_date else '' }}</td>
+                                <td>{{ a.name }}</td>
+                                <td>{{ a.type }}</td>
+                                <td>{{ a.distance_km }} km</td>
+                                <td>{{ a.moving_time_minutes }}</td>
+                                <td>{{ a.pace_min_km }}</td>
+                                <td>{{ a.elevation_ft|int }}</td>
+                                <td style="font-size: 0.8rem; color: #999;">{{ a.tagged_by }}</td>
+                                <td>
+                                    <form method="POST" action="/locations/{{ location.id }}/untag" style="display:inline;">
+                                        <input type="hidden" name="activity_id" value="{{ a.activity_id }}">
+                                        <button type="submit" class="btn btn-secondary btn-sm">Untag</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p style="color: #999; text-align: center; padding: 2rem;">No activities tagged to this location yet.</p>
+                {% endif %}
+            </section>
+
+            <!-- Add Activities -->
+            <section class="section">
+                <h2>Add Activities</h2>
+                <div style="margin-bottom: 1.5rem;">
+                    <form method="POST" action="/locations/{{ location.id }}/auto-tag" style="display: inline;">
+                        <button type="submit" class="btn btn-primary">Auto-Tag Nearby Activities</button>
+                    </form>
+                    <span style="color: #777; font-size: 0.9rem; margin-left: 1rem;">
+                        Tags all activities starting within {{ location.radius_meters|int }}m of this location
+                    </span>
+                </div>
+
+                <h3 style="margin-bottom: 1rem;">Nearby Untagged Activities</h3>
+                <div id="nearby-list" class="nearby-list">
+                    <p style="color: #999;">Loading nearby activities...</p>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+    (function() {
+        const locationId = {{ location.id }};
+        const container = document.getElementById('nearby-list');
+
+        fetch('/api/locations/' + locationId + '/nearby')
+            .then(r => r.json())
+            .then(data => {
+                if (!data.nearby || data.nearby.length === 0) {
+                    container.innerHTML = '<p style="color: #999;">No nearby untagged activities found.</p>';
+                    return;
+                }
+
+                let html = '';
+                data.nearby.forEach(function(a) {
+                    const badgeClass = a.within_radius ? 'within' : 'outside';
+                    const badgeText = a.within_radius
+                        ? Math.round(a.meters_from_center) + 'm'
+                        : Math.round(a.meters_from_center) + 'm';
+                    html += '<div class="nearby-item">';
+                    html += '  <span class="distance-badge ' + badgeClass + '">' + badgeText + '</span>';
+                    html += '  <div class="info">';
+                    html += '    <div class="name">' + (a.name || 'Unnamed') + '</div>';
+                    html += '    <div class="meta">' + (a.start_date ? a.start_date.substring(0, 10) : '') + ' &middot; ' + a.type + ' &middot; ' + a.distance_km + ' km</div>';
+                    html += '  </div>';
+                    html += '  <form method="POST" action="/locations/' + locationId + '/tag">';
+                    html += '    <input type="hidden" name="activity_id" value="' + a.activity_id + '">';
+                    html += '    <button type="submit" class="btn btn-primary btn-sm">Tag</button>';
+                    html += '  </form>';
+                    html += '</div>';
+                });
+
+                container.innerHTML = html;
+            })
+            .catch(function() {
+                container.innerHTML = '<p style="color: #c00;">Failed to load nearby activities.</p>';
+            });
+    })();
+    </script>
+</body>
+</html>

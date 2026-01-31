@@ -226,6 +226,11 @@ def save_activities(user_id: int, activities: List[dict]) -> int:
             kudos_count = activity.get('kudos_count', 0)
             visibility = activity.get('visibility', 'everyone')  # everyone, only_me, followers_only
 
+            # Extract GPS coordinates from start_latlng
+            start_latlng = activity.get('start_latlng')
+            start_lat = start_latlng[0] if start_latlng and len(start_latlng) >= 2 else None
+            start_lng = start_latlng[1] if start_latlng and len(start_latlng) >= 2 else None
+
             # Check if activity exists
             cursor.execute("""
                 SELECT id FROM activities WHERE user_id = ? AND activity_id = ?
@@ -233,12 +238,12 @@ def save_activities(user_id: int, activities: List[dict]) -> int:
             existing = cursor.fetchone()
 
             if existing:
-                # Update existing activity (visibility, kudos may have changed)
+                # Update existing activity (visibility, kudos, coords may have changed)
                 cursor.execute("""
                     UPDATE activities
-                    SET kudos_count = ?, visibility = ?
+                    SET kudos_count = ?, visibility = ?, start_lat = COALESCE(?, start_lat), start_lng = COALESCE(?, start_lng)
                     WHERE user_id = ? AND activity_id = ?
-                """, (kudos_count, visibility, user_id, activity_id))
+                """, (kudos_count, visibility, start_lat, start_lng, user_id, activity_id))
             else:
                 # Insert new activity
                 cursor.execute("""
@@ -246,12 +251,14 @@ def save_activities(user_id: int, activities: List[dict]) -> int:
                         user_id, activity_id, name, type, start_date, distance,
                         moving_time, elapsed_time, total_elevation_gain,
                         average_speed, max_speed, average_heartrate,
-                        max_heartrate, calories, kudos_count, visibility
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        max_heartrate, calories, kudos_count, visibility,
+                        start_lat, start_lng
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (user_id, activity_id, name, activity_type, start_date, distance,
                       moving_time, elapsed_time, total_elevation_gain,
                       average_speed, max_speed, average_heartrate,
-                      max_heartrate, calories, kudos_count, visibility))
+                      max_heartrate, calories, kudos_count, visibility,
+                      start_lat, start_lng))
                 new_count += 1
 
         except Exception as e:

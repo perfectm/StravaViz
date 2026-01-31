@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Locations - Strava Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6; color: #333; background-color: #f5f5f5;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        header {
+            background: linear-gradient(135deg, #fc4c02, #ff7043);
+            color: white; padding: 1rem 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .header-content { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.8rem; font-weight: bold; }
+        nav ul { list-style: none; display: flex; gap: 2rem; }
+        nav a {
+            color: white; text-decoration: none; padding: 0.5rem 1rem;
+            border-radius: 5px; transition: background-color 0.3s ease;
+        }
+        nav a:hover { background-color: rgba(255,255,255,0.2); }
+        .user-profile { display: flex; align-items: center; gap: 0.5rem; color: rgba(255,255,255,0.9); padding: 0.5rem 1rem; }
+        .profile-pic { width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.5); }
+        .profile-placeholder { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,0.3); display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+        main { padding: 2rem 0; }
+        .section {
+            background: white; margin: 2rem 0; padding: 2rem;
+            border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #fc4c02; margin-bottom: 1.5rem; font-size: 1.8rem;
+            border-bottom: 3px solid #fc4c02; padding-bottom: 0.5rem;
+        }
+
+        .form-grid {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 1rem; margin-bottom: 1rem;
+        }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group.full-width { grid-column: 1 / -1; }
+        .form-group label { font-weight: 600; margin-bottom: 4px; font-size: 0.9rem; color: #555; }
+        .form-group input, .form-group textarea {
+            padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 1rem; font-family: inherit;
+        }
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none; border-color: #fc4c02; box-shadow: 0 0 0 2px rgba(252,76,2,0.15);
+        }
+        .form-group textarea { resize: vertical; min-height: 60px; }
+        .checkbox-group { flex-direction: row; align-items: center; gap: 8px; }
+        .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; }
+
+        .btn {
+            display: inline-block; padding: 10px 24px; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 1rem;
+            font-weight: 600; text-decoration: none; transition: all 0.2s;
+        }
+        .btn-primary { background: #fc4c02; color: white; }
+        .btn-primary:hover { background: #e04400; }
+
+        .location-cards {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+        .location-card {
+            background: #fafafa; border: 1px solid #eee; border-radius: 10px;
+            padding: 1.5rem; transition: box-shadow 0.2s;
+        }
+        .location-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .location-card h3 { margin-bottom: 0.5rem; }
+        .location-card h3 a { color: #333; text-decoration: none; }
+        .location-card h3 a:hover { color: #fc4c02; }
+        .location-card .desc { color: #777; font-size: 0.9rem; margin-bottom: 0.75rem; }
+        .location-card .meta {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+            font-size: 0.85rem; color: #555;
+        }
+        .location-card .meta strong { color: #333; }
+
+        .empty-state {
+            text-align: center; padding: 3rem; color: #999;
+        }
+        .empty-state p { margin-top: 0.5rem; }
+
+        @media (max-width: 768px) {
+            .header-content { flex-direction: column; gap: 1rem; }
+            nav ul { flex-wrap: wrap; gap: 1rem; }
+            .form-grid { grid-template-columns: 1fr; }
+            .location-cards { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">Strava Dashboard</div>
+                <nav>
+                    <ul>
+                        <li><a href="/dashboard">My Dashboard</a></li>
+                        <li><a href="/club">Club View</a></li>
+                        <li><a href="/training-log">Training Log</a></li>
+                        <li><a href="/locations">Locations</a></li>
+                        {% if user %}
+                        <li><a href="/settings">Settings</a></li>
+                        <li class="user-profile">
+                            {% if user.profile_picture %}
+                            <img src="{{ user.profile_picture }}" alt="Profile" class="profile-pic">
+                            {% else %}
+                            <div class="profile-placeholder">&#x1f464;</div>
+                            {% endif %}
+                            <span>{{ user.firstname }} {{ user.lastname }}</span>
+                        </li>
+                        <li><a href="/auth/logout" style="background: rgba(255,255,255,0.2);">Logout</a></li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <section class="section">
+                <h2>Create New Location</h2>
+                <form method="POST" action="/locations">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label for="name">Location Name *</label>
+                            <input type="text" id="name" name="name" required placeholder="e.g. Green Lake Loop">
+                        </div>
+                        <div class="form-group">
+                            <label for="radius_meters">Radius (meters)</label>
+                            <input type="number" id="radius_meters" name="radius_meters" value="500" min="50" max="50000" step="50">
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="description">Description</label>
+                            <textarea id="description" name="description" placeholder="Optional description..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="center_lat">Latitude *</label>
+                            <input type="number" id="center_lat" name="center_lat" required step="any" placeholder="e.g. 47.6815">
+                        </div>
+                        <div class="form-group">
+                            <label for="center_lng">Longitude *</label>
+                            <input type="number" id="center_lng" name="center_lng" required step="any" placeholder="e.g. -122.3408">
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <input type="checkbox" id="auto_tag" name="auto_tag" checked>
+                            <label for="auto_tag">Auto-tag existing activities within radius</label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Location</button>
+                </form>
+            </section>
+
+            <section class="section">
+                <h2>My Locations</h2>
+                {% if locations %}
+                <div class="location-cards">
+                    {% for loc in locations %}
+                    <div class="location-card">
+                        <h3><a href="/locations/{{ loc.id }}">{{ loc.name }}</a></h3>
+                        {% if loc.description %}
+                        <div class="desc">{{ loc.description }}</div>
+                        {% endif %}
+                        <div class="meta">
+                            <div><strong>{{ loc.stats.visit_count }}</strong> visits</div>
+                            <div>Best pace: <strong>{{ loc.stats.best_pace_formatted }}</strong></div>
+                            <div>Avg pace: <strong>{{ loc.stats.avg_pace_formatted }}</strong></div>
+                            <div>Radius: <strong>{{ loc.radius_meters|int }}m</strong></div>
+                            {% if loc.stats.last_visit %}
+                            <div>Last visit: <strong>{{ loc.stats.last_visit[:10] }}</strong></div>
+                            {% endif %}
+                            <div>Elevation: <strong>{{ loc.stats.total_elevation|int }}m</strong></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="empty-state">
+                    <h3>No locations yet</h3>
+                    <p>Create your first location above to start tracking performance at your favorite trails and routes.</p>
+                </div>
+                {% endif %}
+            </section>
+        </div>
+    </main>
+</body>
+</html>

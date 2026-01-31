@@ -33,15 +33,17 @@ python migrations/002_weekly_trophies.py
 python migrations/003_add_kudos_tracking.py
 python migrations/004_add_activity_visibility.py
 python migrations/005_add_hr_zones.py
+python migrations/006_add_locations.py
 
 # Check current schema
 python migrations/check_schema.py
 
 # One-time data backfill scripts (after migrations)
-python update_kudos.py       # Backfill kudos counts from Strava
-python update_visibility.py  # Backfill visibility settings from Strava (REQUIRED after migration 004)
-python backfill_hr_zones.py  # Backfill HR zone data from Strava (REQUIRED after migration 005)
-# Note: New activities get visibility and HR zones automatically on sync
+python update_kudos.py          # Backfill kudos counts from Strava
+python update_visibility.py     # Backfill visibility settings from Strava (REQUIRED after migration 004)
+python backfill_hr_zones.py     # Backfill HR zone data from Strava (REQUIRED after migration 005)
+python backfill_coordinates.py  # Backfill GPS coordinates from Strava (REQUIRED after migration 006)
+# Note: New activities get visibility, HR zones, and coordinates automatically on sync
 ```
 
 ### Environment Setup
@@ -69,7 +71,8 @@ This application has evolved through multiple phases:
 4. **Phase 3** - Background sync service with APScheduler
 5. **Phase 4** - Weekly trophies (migration 002) and kudos tracking (migration 003)
 6. **Phase 5** - Activity-level visibility/privacy (migration 004)
-7. **Current** - Heart rate zone tracking (migration 005)
+7. **Phase 6** - Heart rate zone tracking (migration 005)
+8. **Current** - Location analysis with GPS tagging (migration 006)
 
 ### Core Components
 
@@ -111,6 +114,16 @@ This application has evolved through multiple phases:
 /settings                 User settings page (requires auth)
 /settings/privacy         Privacy settings update (POST, requires auth)
 /sync                     Manual activity sync trigger (POST, requires auth)
+
+/locations                List user's locations with stats (requires auth)
+/locations (POST)         Create new location (with optional auto-tag)
+/locations/{id}           Location detail: stats, chart, tagged activities
+/locations/{id}/edit      Update location (POST, requires auth)
+/locations/{id}/delete    Delete location + cascade tags (POST, requires auth)
+/locations/{id}/tag       Tag activity to location (POST, requires auth)
+/locations/{id}/untag     Remove activity tag (POST, requires auth)
+/locations/{id}/auto-tag  Auto-tag nearby activities (POST, requires auth)
+/api/locations/{id}/nearby  JSON: untagged activities sorted by distance
 ```
 
 ### Database Schema
@@ -143,11 +156,27 @@ This application has evolved through multiple phases:
 - `created_at`
 - UNIQUE constraint: `(user_id, week_start)`
 
+**activities** table also includes (added in migration 006):
+- `start_lat` (REAL) - GPS latitude of activity start
+- `start_lng` (REAL) - GPS longitude of activity start
+
 **activity_hr_zones** - Per-activity heart rate zone distribution
 - `id` (PK), `user_id` (FK), `activity_id` (Strava ID)
 - `zone_1_seconds`, `zone_2_seconds`, `zone_3_seconds`, `zone_4_seconds`, `zone_5_seconds`
 - `fetched_at`
 - UNIQUE constraint: `(user_id, activity_id)`
+
+**locations** - User-defined named locations for performance tracking
+- `id` (PK), `user_id` (FK)
+- `name`, `description`
+- `center_lat`, `center_lng`, `radius_meters` (default 500)
+- `created_at`, `updated_at`
+
+**activity_locations** - Many-to-many: activities tagged to locations
+- `id` (PK), `user_id` (FK), `activity_id` (Strava ID), `location_id` (FK)
+- `tagged_by` ('manual' or 'auto')
+- `created_at`
+- UNIQUE constraint: `(user_id, activity_id, location_id)`
 
 **club_memberships** - Club associations
 - `id` (PK), `user_id` (FK), `club_id`

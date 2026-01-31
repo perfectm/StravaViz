@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request, Depends, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 import requests
 import pandas as pd
@@ -10,6 +10,8 @@ import matplotlib.dates as mdates
 import io
 import base64
 import os
+import math
+import json
 from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime, timedelta
@@ -1383,6 +1385,487 @@ async def training_log(request: Request, user: dict = Depends(get_current_user))
         "activities_json": json.dumps(activities),
         "activity_types": activity_types,
     })
+
+
+# ============================================================================
+# Location Analysis Routes
+# ============================================================================
+
+def haversine_meters(lat1, lng1, lat2, lng2):
+    """Calculate distance between two GPS coordinates in meters using Haversine formula."""
+    R = 6371000  # Earth radius in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lng2 - lng1)
+
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
+
+
+def compute_location_stats(activity_rows):
+    """
+    Compute performance stats from a list of activity dicts tagged to a location.
+
+    Returns dict with visit_count, best/avg pace, best/avg time, total elevation, last visit.
+    """
+    if not activity_rows:
+        return {
+            'visit_count': 0,
+            'best_pace_min_km': None,
+            'avg_pace_min_km': None,
+            'best_time_minutes': None,
+            'avg_time_minutes': None,
+            'total_elevation': 0,
+            'last_visit': None,
+        }
+
+    visit_count = len(activity_rows)
+    total_elevation = 0
+    paces = []
+    times = []
+    last_visit = None
+
+    for a in activity_rows:
+        distance = a.get('distance') or 0
+        moving_time = a.get('moving_time') or 0
+        elevation = a.get('total_elevation_gain') or 0
+        start_date = a.get('start_date', '')
+
+        total_elevation += elevation
+
+        if moving_time > 0:
+            times.append(moving_time / 60)  # minutes
+
+        if distance > 0 and moving_time > 0:
+            pace = (moving_time / 60) / (distance / 1000)  # min/km
+            paces.append(pace)
+
+        if start_date:
+            if not last_visit or start_date > last_visit:
+                last_visit = start_date
+
+    best_pace = min(paces) if paces else None
+    avg_pace = sum(paces) / len(paces) if paces else None
+    best_time = min(times) if times else None
+    avg_time = sum(times) / len(times) if times else None
+
+    return {
+        'visit_count': visit_count,
+        'best_pace_min_km': round(best_pace, 2) if best_pace else None,
+        'avg_pace_min_km': round(avg_pace, 2) if avg_pace else None,
+        'best_time_minutes': round(best_time, 1) if best_time else None,
+        'avg_time_minutes': round(avg_time, 1) if avg_time else None,
+        'total_elevation': round(total_elevation, 1),
+        'last_visit': last_visit,
+    }
+
+
+def format_pace(pace_min_km):
+    """Format pace as M:SS min/km string."""
+    if pace_min_km is None:
+        return "N/A"
+    minutes = int(pace_min_km)
+    seconds = int((pace_min_km - minutes) * 60)
+    return f"{minutes}:{seconds:02d}"
+
+
+def get_bounding_box(center_lat, center_lng, radius_meters):
+    """Get a rough lat/lng bounding box for pre-filtering SQL queries."""
+    # ~111,320 meters per degree of latitude
+    lat_delta = radius_meters / 111320
+    # longitude degrees vary by latitude
+    lng_delta = radius_meters / (111320 * math.cos(math.radians(center_lat)))
+    return (
+        center_lat - lat_delta,
+        center_lat + lat_delta,
+        center_lng - lng_delta,
+        center_lng + lng_delta,
+    )
+
+
+@app.get("/locations", response_class=HTMLResponse)
+async def locations_list(request: Request, user: dict = Depends(get_current_user)):
+    """List user's locations with summary stats."""
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT * FROM locations WHERE user_id = ? ORDER BY name ASC
+    """, (user_id,))
+    locations_rows = cursor.fetchall()
+
+    locations = []
+    for loc in locations_rows:
+        loc_dict = dict(loc)
+        # Get tagged activities for stats
+        cursor.execute("""
+            SELECT a.* FROM activities a
+            INNER JOIN activity_locations al ON a.user_id = al.user_id AND a.activity_id = al.activity_id
+            WHERE al.location_id = ? AND al.user_id = ?
+        """, (loc_dict['id'], user_id))
+        tagged = [dict(r) for r in cursor.fetchall()]
+        loc_dict['stats'] = compute_location_stats(tagged)
+        loc_dict['stats']['best_pace_formatted'] = format_pace(loc_dict['stats']['best_pace_min_km'])
+        loc_dict['stats']['avg_pace_formatted'] = format_pace(loc_dict['stats']['avg_pace_min_km'])
+        locations.append(loc_dict)
+
+    conn.close()
+
+    return templates.TemplateResponse("locations.html", {
+        "request": request,
+        "user": user,
+        "locations": locations,
+    })
+
+
+@app.post("/locations")
+async def create_location(request: Request, user: dict = Depends(get_current_user)):
+    """Create a new location and optionally auto-tag nearby activities."""
+    user_id = user['id']
+    form = await request.form()
+
+    name = form.get('name', '').strip()
+    description = form.get('description', '').strip()
+    center_lat = float(form.get('center_lat', 0))
+    center_lng = float(form.get('center_lng', 0))
+    radius_meters = float(form.get('radius_meters', 500))
+    auto_tag = form.get('auto_tag') == 'on'
+
+    if not name or center_lat == 0 or center_lng == 0:
+        return RedirectResponse(url="/locations?error=missing_fields", status_code=303)
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO locations (user_id, name, description, center_lat, center_lng, radius_meters)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (user_id, name, description or None, center_lat, center_lng, radius_meters))
+    location_id = cursor.lastrowid
+    conn.commit()
+
+    if auto_tag:
+        _auto_tag_location(cursor, conn, user_id, location_id, center_lat, center_lng, radius_meters)
+
+    conn.close()
+
+    return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+
+def _auto_tag_location(cursor, conn, user_id, location_id, center_lat, center_lng, radius_meters):
+    """Auto-tag activities within radius of a location."""
+    min_lat, max_lat, min_lng, max_lng = get_bounding_box(center_lat, center_lng, radius_meters)
+
+    cursor.execute("""
+        SELECT activity_id, start_lat, start_lng FROM activities
+        WHERE user_id = ? AND start_lat IS NOT NULL AND start_lng IS NOT NULL
+        AND start_lat BETWEEN ? AND ? AND start_lng BETWEEN ? AND ?
+    """, (user_id, min_lat, max_lat, min_lng, max_lng))
+
+    candidates = cursor.fetchall()
+    tagged = 0
+
+    for row in candidates:
+        dist = haversine_meters(center_lat, center_lng, row['start_lat'], row['start_lng'])
+        if dist <= radius_meters:
+            try:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO activity_locations (user_id, activity_id, location_id, tagged_by)
+                    VALUES (?, ?, ?, 'auto')
+                """, (user_id, row['activity_id'], location_id))
+                tagged += 1
+            except Exception:
+                continue
+
+    conn.commit()
+    return tagged
+
+
+@app.get("/locations/{location_id}", response_class=HTMLResponse)
+async def location_detail(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """Detail page for a specific location."""
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM locations WHERE id = ? AND user_id = ?", (location_id, user_id))
+    location = cursor.fetchone()
+
+    if not location:
+        conn.close()
+        return RedirectResponse(url="/locations", status_code=303)
+
+    location = dict(location)
+
+    # Get tagged activities
+    cursor.execute("""
+        SELECT a.*, al.tagged_by, al.created_at as tagged_at
+        FROM activities a
+        INNER JOIN activity_locations al ON a.user_id = al.user_id AND a.activity_id = al.activity_id
+        WHERE al.location_id = ? AND al.user_id = ?
+        ORDER BY a.start_date DESC
+    """, (location_id, user_id))
+    tagged_activities = [dict(r) for r in cursor.fetchall()]
+
+    # Compute stats
+    stats = compute_location_stats(tagged_activities)
+    stats['best_pace_formatted'] = format_pace(stats['best_pace_min_km'])
+    stats['avg_pace_formatted'] = format_pace(stats['avg_pace_min_km'])
+
+    # Format tagged activities for display
+    for a in tagged_activities:
+        dist = a.get('distance') or 0
+        mt = a.get('moving_time') or 0
+        a['distance_km'] = round(dist / 1000, 2)
+        a['distance_miles'] = round(dist / 1609.344, 2)
+        a['moving_time_minutes'] = round(mt / 60, 1)
+        a['elevation_ft'] = round((a.get('total_elevation_gain') or 0) * 3.28084, 0)
+        if dist > 0 and mt > 0:
+            a['pace_min_km'] = format_pace((mt / 60) / (dist / 1000))
+        else:
+            a['pace_min_km'] = "N/A"
+
+    # Generate performance timeline chart
+    timeline_chart = None
+    if len(tagged_activities) >= 2:
+        timeline_chart = _generate_timeline_chart(tagged_activities, location['name'])
+
+    conn.close()
+
+    return templates.TemplateResponse("location_detail.html", {
+        "request": request,
+        "user": user,
+        "location": location,
+        "stats": stats,
+        "tagged_activities": tagged_activities,
+        "timeline_chart": timeline_chart,
+    })
+
+
+def _generate_timeline_chart(activities, location_name):
+    """Generate a pace-over-time chart for a location's tagged activities."""
+    dates = []
+    paces = []
+
+    for a in reversed(activities):  # chronological order
+        dist = a.get('distance') or 0
+        mt = a.get('moving_time') or 0
+        start = a.get('start_date', '')
+
+        if dist > 0 and mt > 0 and start:
+            try:
+                dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+                pace = (mt / 60) / (dist / 1000)  # min/km
+                dates.append(dt)
+                paces.append(pace)
+            except (ValueError, TypeError):
+                continue
+
+    if len(dates) < 2:
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(dates, paces, 'o-', color='#fc4c02', linewidth=2, markersize=6)
+    ax.set_xlabel('Date')
+    ax.set_ylabel('Pace (min/km)')
+    ax.set_title(f'Pace Over Time — {location_name}')
+    ax.invert_yaxis()  # lower pace = faster = higher on chart
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    fig.autofmt_xdate()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.close()
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('utf-8')
+
+
+@app.post("/locations/{location_id}/edit")
+async def edit_location(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """Update location details."""
+    user_id = user['id']
+    form = await request.form()
+
+    name = form.get('name', '').strip()
+    description = form.get('description', '').strip()
+    center_lat = float(form.get('center_lat', 0))
+    center_lng = float(form.get('center_lng', 0))
+    radius_meters = float(form.get('radius_meters', 500))
+
+    if not name or center_lat == 0 or center_lng == 0:
+        return RedirectResponse(url=f"/locations/{location_id}?error=missing_fields", status_code=303)
+
+    conn = sqlite3.connect('strava_activities.db')
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE locations
+        SET name = ?, description = ?, center_lat = ?, center_lng = ?, radius_meters = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    """, (name, description or None, center_lat, center_lng, radius_meters, location_id, user_id))
+    conn.commit()
+    conn.close()
+
+    return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+
+@app.post("/locations/{location_id}/delete")
+async def delete_location(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """Delete a location and its activity tags."""
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    cursor = conn.cursor()
+
+    # Delete tags first (in case FK cascade not enforced)
+    cursor.execute("DELETE FROM activity_locations WHERE location_id = ? AND user_id = ?", (location_id, user_id))
+    cursor.execute("DELETE FROM locations WHERE id = ? AND user_id = ?", (location_id, user_id))
+    conn.commit()
+    conn.close()
+
+    return RedirectResponse(url="/locations", status_code=303)
+
+
+@app.post("/locations/{location_id}/tag")
+async def tag_activity(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """Tag an activity to this location."""
+    user_id = user['id']
+    form = await request.form()
+    activity_id = int(form.get('activity_id', 0))
+
+    if activity_id == 0:
+        return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+    conn = sqlite3.connect('strava_activities.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT OR IGNORE INTO activity_locations (user_id, activity_id, location_id, tagged_by)
+            VALUES (?, ?, ?, 'manual')
+        """, (user_id, activity_id, location_id))
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+
+@app.post("/locations/{location_id}/untag")
+async def untag_activity(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """Remove an activity tag from this location."""
+    user_id = user['id']
+    form = await request.form()
+    activity_id = int(form.get('activity_id', 0))
+
+    if activity_id == 0:
+        return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+    conn = sqlite3.connect('strava_activities.db')
+    cursor = conn.cursor()
+    cursor.execute("""
+        DELETE FROM activity_locations
+        WHERE user_id = ? AND activity_id = ? AND location_id = ?
+    """, (user_id, activity_id, location_id))
+    conn.commit()
+    conn.close()
+
+    return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+
+@app.post("/locations/{location_id}/auto-tag")
+async def auto_tag_location(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """Auto-tag all nearby activities within the location's radius."""
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM locations WHERE id = ? AND user_id = ?", (location_id, user_id))
+    location = cursor.fetchone()
+
+    if location:
+        _auto_tag_location(cursor, conn, user_id, location_id,
+                           location['center_lat'], location['center_lng'], location['radius_meters'])
+
+    conn.close()
+
+    return RedirectResponse(url=f"/locations/{location_id}", status_code=303)
+
+
+@app.get("/api/locations/{location_id}/nearby")
+async def nearby_activities(request: Request, location_id: int, user: dict = Depends(get_current_user)):
+    """JSON endpoint: untagged activities sorted by distance from location center."""
+    user_id = user['id']
+
+    conn = sqlite3.connect('strava_activities.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM locations WHERE id = ? AND user_id = ?", (location_id, user_id))
+    location = cursor.fetchone()
+
+    if not location:
+        conn.close()
+        return JSONResponse({"error": "Location not found"}, status_code=404)
+
+    center_lat = location['center_lat']
+    center_lng = location['center_lng']
+    radius = location['radius_meters']
+
+    # Get bounding box with 2x radius for a wider search
+    min_lat, max_lat, min_lng, max_lng = get_bounding_box(center_lat, center_lng, radius * 2)
+
+    # Find activities with coordinates that are NOT already tagged to this location
+    cursor.execute("""
+        SELECT a.activity_id, a.name, a.type, a.start_date, a.distance,
+               a.moving_time, a.start_lat, a.start_lng
+        FROM activities a
+        WHERE a.user_id = ? AND a.start_lat IS NOT NULL AND a.start_lng IS NOT NULL
+        AND a.start_lat BETWEEN ? AND ? AND a.start_lng BETWEEN ? AND ?
+        AND a.activity_id NOT IN (
+            SELECT al.activity_id FROM activity_locations al
+            WHERE al.location_id = ? AND al.user_id = ?
+        )
+        ORDER BY a.start_date DESC
+    """, (user_id, min_lat, max_lat, min_lng, max_lng, location_id, user_id))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        dist = haversine_meters(center_lat, center_lng, row['start_lat'], row['start_lng'])
+        distance_m = row['distance'] or 0
+        results.append({
+            'activity_id': row['activity_id'],
+            'name': row['name'],
+            'type': row['type'],
+            'start_date': row['start_date'],
+            'distance_km': round(distance_m / 1000, 2),
+            'meters_from_center': round(dist, 0),
+            'within_radius': dist <= radius,
+        })
+
+    results.sort(key=lambda x: x['meters_from_center'])
+
+    return JSONResponse({"nearby": results[:50]})
 
 
 # To run: uvicorn strava_fastapi:app --reload

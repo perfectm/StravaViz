@@ -2008,6 +2008,7 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
     """List all segments the user has run, with stats and PR highlights."""
     user_id = user['id']
     sort = request.query_params.get('sort', 'attempts')
+    selected_types = request.query_params.getlist('types')
 
     conn = sqlite3.connect('strava_activities.db')
     conn.row_factory = sqlite3.Row
@@ -2026,10 +2027,29 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
             "total_efforts": 0,
             "segments_with_prs": 0,
             "sort": sort,
+            "available_types": [],
+            "selected_types": [],
         })
 
-    # Get all segments the user has efforts on
+    # Get all distinct activity types from user's segment efforts
     cursor.execute("""
+        SELECT DISTINCT a.type
+        FROM segment_efforts se
+        INNER JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
+        WHERE se.user_id = ? AND a.type IS NOT NULL
+        ORDER BY a.type
+    """, (user_id,))
+    available_types = [row['type'] for row in cursor.fetchall()]
+
+    # Default to all types if none selected
+    if not selected_types:
+        selected_types = list(available_types)
+
+    # Build type filter placeholders
+    type_placeholders = ','.join('?' * len(selected_types))
+
+    # Get all segments the user has efforts on, filtered by activity type
+    cursor.execute(f"""
         SELECT
             s.strava_segment_id,
             s.name,
@@ -2045,9 +2065,10 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
             MIN(se.start_date) as first_attempt
         FROM segments s
         INNER JOIN segment_efforts se ON s.strava_segment_id = se.strava_segment_id
-        WHERE se.user_id = ?
+        INNER JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
+        WHERE se.user_id = ? AND a.type IN ({type_placeholders})
         GROUP BY s.strava_segment_id
-    """, (user_id,))
+    """, (user_id, *selected_types))
 
     segments_rows = cursor.fetchall()
     segments = [dict(r) for r in segments_rows]
@@ -2067,9 +2088,9 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
     else:  # attempts (default)
         segments.sort(key=lambda s: s['attempt_count'], reverse=True)
 
-    # PR highlights: segments where user got pr_rank=1 in last 30 days
+    # PR highlights: segments where user got pr_rank=1 in last 30 days, filtered by type
     thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
-    cursor.execute("""
+    cursor.execute(f"""
         SELECT
             s.strava_segment_id,
             s.name,
@@ -2079,11 +2100,13 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
             se.pr_rank
         FROM segment_efforts se
         INNER JOIN segments s ON se.strava_segment_id = s.strava_segment_id
+        INNER JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
         WHERE se.user_id = ?
           AND se.pr_rank = 1
           AND se.start_date >= ?
+          AND a.type IN ({type_placeholders})
         ORDER BY se.start_date DESC
-    """, (user_id, thirty_days_ago))
+    """, (user_id, thirty_days_ago, *selected_types))
 
     pr_highlights = []
     for row in cursor.fetchall():
@@ -2096,11 +2119,12 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
     total_segments = len(segments)
     total_efforts = sum(s['attempt_count'] for s in segments)
 
-    cursor.execute("""
-        SELECT COUNT(DISTINCT strava_segment_id) as count
-        FROM segment_efforts
-        WHERE user_id = ? AND pr_rank = 1
-    """, (user_id,))
+    cursor.execute(f"""
+        SELECT COUNT(DISTINCT se.strava_segment_id) as count
+        FROM segment_efforts se
+        INNER JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
+        WHERE se.user_id = ? AND se.pr_rank = 1 AND a.type IN ({type_placeholders})
+    """, (user_id, *selected_types))
     segments_with_prs = cursor.fetchone()['count']
 
     conn.close()
@@ -2114,6 +2138,8 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
         "total_efforts": total_efforts,
         "segments_with_prs": segments_with_prs,
         "sort": sort,
+        "available_types": available_types,
+        "selected_types": selected_types,
     })
 
 
@@ -2121,6 +2147,7 @@ async def segments_list(request: Request, user: dict = Depends(get_current_user)
 async def segment_detail(request: Request, strava_segment_id: int, user: dict = Depends(get_current_user)):
     """Detail page for a specific segment showing all efforts and time progression."""
     user_id = user['id']
+    selected_types = request.query_params.getlist('types')
 
     conn = sqlite3.connect('strava_activities.db')
     conn.row_factory = sqlite3.Row
@@ -2149,13 +2176,23 @@ async def segment_detail(request: Request, strava_segment_id: int, user: dict = 
     """, (user_id, strava_segment_id))
 
     efforts_rows = cursor.fetchall()
-    efforts = [dict(r) for r in efforts_rows]
+    all_efforts = [dict(r) for r in efforts_rows]
     conn.close()
 
-    if not efforts:
+    if not all_efforts:
         return RedirectResponse(url="/segments", status_code=303)
 
-    # Compute stats
+    # Determine available types from all efforts
+    available_types = sorted(set(e['activity_type'] for e in all_efforts if e.get('activity_type')))
+
+    # Default to all types if none selected
+    if not selected_types:
+        selected_types = list(available_types)
+
+    # Filter efforts by selected types
+    efforts = [e for e in all_efforts if e.get('activity_type') in selected_types]
+
+    # Compute stats on filtered efforts
     elapsed_times = [e['elapsed_time'] for e in efforts if e.get('elapsed_time') and e['elapsed_time'] > 0]
     best_time = min(elapsed_times) if elapsed_times else None
     avg_time = sum(elapsed_times) / len(elapsed_times) if elapsed_times else None
@@ -2193,7 +2230,7 @@ async def segment_detail(request: Request, strava_segment_id: int, user: dict = 
         e['is_best'] = (e.get('elapsed_time') == best_time) if best_time else False
         e['date_str'] = (e.get('start_date') or '')[:10]
 
-    # Generate chart
+    # Generate chart on filtered efforts
     chart = _generate_segment_chart(efforts, segment['name'])
 
     return templates.TemplateResponse("segment_detail.html", {
@@ -2203,6 +2240,8 @@ async def segment_detail(request: Request, strava_segment_id: int, user: dict = 
         "stats": stats,
         "efforts": efforts,
         "chart": chart,
+        "available_types": available_types,
+        "selected_types": selected_types,
     })
 
 

@@ -74,6 +74,24 @@
         .sort-bar a.active { border-color: #fc4c02; color: #fc4c02; background: white; }
         .sort-bar a:hover { border-color: #fc4c02; }
 
+        .type-filter { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+        .type-filter label { font-weight: 600; color: #555; font-size: 0.9rem; white-space: nowrap; }
+        .type-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .type-chip {
+            display: flex; align-items: center; gap: 4px;
+            padding: 6px 14px; border-radius: 20px; cursor: pointer;
+            font-size: 0.85rem; font-weight: 600;
+            border: 2px solid #ddd; background: #f8f8f8; color: #666;
+            transition: all 0.15s; user-select: none;
+        }
+        .type-chip input { display: none; }
+        .type-chip.checked { border-color: currentColor; background: white; }
+        .type-chip[data-type="Walk"] { --chip-color: #4CAF50; }
+        .type-chip[data-type="Hike"] { --chip-color: #FF9800; }
+        .type-chip[data-type="Run"] { --chip-color: #2196F3; }
+        .type-chip[data-type="Ride"] { --chip-color: #9C27B0; }
+        .type-chip.checked { color: var(--chip-color); border-color: var(--chip-color); }
+
         .segment-cards {
             display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1.5rem;
@@ -193,10 +211,29 @@
                 {% if segments %}
                 <div class="sort-bar">
                     <label>Sort by:</label>
-                    <a href="/segments?sort=attempts" class="{{ 'active' if sort == 'attempts' }}">Most Attempts</a>
-                    <a href="/segments?sort=recent" class="{{ 'active' if sort == 'recent' }}">Recent</a>
-                    <a href="/segments?sort=name" class="{{ 'active' if sort == 'name' }}">Name</a>
+                    <a href="/segments?sort=attempts{% for t in selected_types %}&types={{ t }}{% endfor %}" class="{{ 'active' if sort == 'attempts' }}">Most Attempts</a>
+                    <a href="/segments?sort=recent{% for t in selected_types %}&types={{ t }}{% endfor %}" class="{{ 'active' if sort == 'recent' }}">Recent</a>
+                    <a href="/segments?sort=name{% for t in selected_types %}&types={{ t }}{% endfor %}" class="{{ 'active' if sort == 'name' }}">Name</a>
                 </div>
+
+                {% if available_types|length > 1 %}
+                <form id="type-filter-form" method="GET" action="/segments">
+                    <input type="hidden" name="sort" value="{{ sort }}">
+                    <div class="type-filter" style="margin-bottom: 1.5rem;">
+                        <label>Activity Types:</label>
+                        <div class="type-chips">
+                            {% for t in available_types %}
+                            <label class="type-chip {{ 'checked' if t in selected_types }}" data-type="{{ t }}">
+                                <input type="checkbox" name="types" value="{{ t }}"
+                                       {{ 'checked' if t in selected_types }}
+                                       onchange="this.closest('form').submit()">
+                                {{ t }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </form>
+                {% endif %}
 
                 <div class="segment-cards">
                     {% for seg in segments %}

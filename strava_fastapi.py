@@ -44,7 +44,8 @@ from sync_service import (
     get_recent_trophy_winners,
     get_weekly_kudos_leaderboard,
     get_alltime_kudos_leaderboard,
-    get_most_kudos_single_activity
+    get_most_kudos_single_activity,
+    get_shared_segments
 )
 from apscheduler.schedulers.background import BackgroundScheduler
 import logging
@@ -1299,6 +1300,7 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
         weekly_kudos_leaderboard = get_weekly_kudos_leaderboard()
         alltime_kudos_leaderboard = get_alltime_kudos_leaderboard()
         most_kudos_activity = get_most_kudos_single_activity()
+        shared_segments = get_shared_segments()
 
         context = {
             "request": request,
@@ -1319,6 +1321,7 @@ async def club_dashboard(request: Request, user: dict = Depends(get_current_user
             "weekly_kudos_leaderboard": weekly_kudos_leaderboard,  # Weekly kudos leaders
             "alltime_kudos_leaderboard": alltime_kudos_leaderboard,  # All-time kudos leaders
             "most_kudos_activity": most_kudos_activity,  # Single activity with most kudos
+            "shared_segments": shared_segments,  # Segments shared by 2+ members
             "leaderboard_chart": leaderboard_chart,
             "type_chart": type_chart,
             "type_counts": type_counts,

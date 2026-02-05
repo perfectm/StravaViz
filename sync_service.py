@@ -1005,6 +1005,106 @@ def get_most_kudos_single_activity() -> dict:
     return None
 
 
+def format_segment_time(seconds):
+    """Format seconds as H:MM:SS or M:SS string."""
+    if seconds is None:
+        return "N/A"
+    seconds = int(seconds)
+    if seconds >= 3600:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    minutes = seconds // 60
+    secs = seconds % 60
+    return f"{minutes}:{secs:02d}"
+
+
+def get_shared_segments() -> list:
+    """
+    Get segments where 2+ club members have recorded efforts.
+    Returns each segment with a mini top-3 leaderboard of best times.
+    Respects privacy settings.
+
+    Returns:
+        List of dicts with segment info and leaderboard data
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Check if segments tables exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='segments'")
+        if not cursor.fetchone():
+            conn.close()
+            return []
+
+        # Find segments with efforts from 2+ distinct non-private users
+        # on non-private activities
+        cursor.execute("""
+            SELECT
+                s.strava_segment_id,
+                s.name,
+                s.distance,
+                s.city,
+                s.state,
+                COUNT(DISTINCT se.user_id) as member_count,
+                COUNT(se.id) as total_efforts
+            FROM segments s
+            INNER JOIN segment_efforts se ON s.strava_segment_id = se.strava_segment_id
+            INNER JOIN users u ON se.user_id = u.id
+            INNER JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
+            WHERE u.is_active = 1
+              AND u.privacy_level != 'private'
+              AND a.visibility != 'only_me'
+            GROUP BY s.strava_segment_id
+            HAVING member_count >= 2
+            ORDER BY member_count DESC, total_efforts DESC
+        """)
+
+        shared_segments = []
+        for row in cursor.fetchall():
+            segment = dict(row)
+
+            # Get each member's best time for this segment
+            cursor.execute("""
+                SELECT
+                    u.firstname,
+                    u.lastname,
+                    u.profile_picture,
+                    MIN(se.elapsed_time) as best_time,
+                    COUNT(se.id) as attempt_count
+                FROM segment_efforts se
+                INNER JOIN users u ON se.user_id = u.id
+                INNER JOIN activities a ON se.user_id = a.user_id AND se.activity_id = a.activity_id
+                WHERE se.strava_segment_id = ?
+                  AND u.is_active = 1
+                  AND u.privacy_level != 'private'
+                  AND a.visibility != 'only_me'
+                GROUP BY se.user_id
+                ORDER BY best_time ASC
+                LIMIT 3
+            """, (segment['strava_segment_id'],))
+
+            leaderboard = []
+            for member_row in cursor.fetchall():
+                member = dict(member_row)
+                member['best_time_formatted'] = format_segment_time(member['best_time'])
+                leaderboard.append(member)
+
+            segment['leaderboard'] = leaderboard
+            segment['distance_km'] = round(segment['distance'] / 1000, 2) if segment['distance'] else None
+            shared_segments.append(segment)
+
+        return shared_segments
+
+    except Exception as e:
+        logger.error(f"Error getting shared segments: {e}")
+        return []
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
     # For testing: sync all users
     from dotenv import load_dotenv

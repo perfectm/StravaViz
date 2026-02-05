@@ -503,6 +503,51 @@
             </section>
             {% endif %}
 
+            {% if shared_segments and shared_segments|length > 0 %}
+            <section class="section">
+                <h2>🏔️ Shared Segments</h2>
+                <p style="color: #666; margin-bottom: 20px;">Segments where multiple club members have recorded efforts. See how you stack up!</p>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1.5rem;">
+                    {% for seg in shared_segments %}
+                    <div style="background: #fafafa; border: 1px solid #eee; border-radius: 10px; padding: 1.5rem; transition: box-shadow 0.2s;" onmouseover="this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'" onmouseout="this.style.boxShadow='none'">
+                        <h3 style="margin-bottom: 0.3rem;">
+                            <a href="/segments/{{ seg.strava_segment_id }}" style="color: #333; text-decoration: none;">{{ seg.name }}</a>
+                        </h3>
+                        {% if seg.city or seg.state %}
+                        <div style="color: #999; font-size: 0.85rem; margin-bottom: 0.5rem;">{{ seg.city }}{% if seg.city and seg.state %}, {% endif %}{{ seg.state }}</div>
+                        {% endif %}
+                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+                            {% if seg.distance_km %}
+                            <span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; background: #e3f2fd; color: #1565c0;">{{ seg.distance_km }} km</span>
+                            {% endif %}
+                            <span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; background: #e8f5e9; color: #2e7d32;">{{ seg.member_count }} members</span>
+                            <span style="display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; background: #f3e5f5; color: #7b1fa2;">{{ seg.total_efforts }} efforts</span>
+                        </div>
+
+                        <div style="border-top: 1px solid #eee; padding-top: 0.75rem;">
+                            {% for member in seg.leaderboard %}
+                            <div style="display: flex; align-items: center; gap: 0.5rem; padding: 4px 0;{% if not loop.last %} border-bottom: 1px solid #f0f0f0;{% endif %}">
+                                <span style="font-size: 1.1rem; width: 24px; text-align: center;">
+                                    {% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% endif %}
+                                </span>
+                                {% if member.profile_picture %}
+                                <img src="{{ member.profile_picture }}" alt="" style="width: 24px; height: 24px; border-radius: 50%; border: 1px solid #ddd;">
+                                {% else %}
+                                <span style="width: 24px; height: 24px; border-radius: 50%; background: #e0e0e0; display: inline-flex; align-items: center; justify-content: center; font-size: 0.7rem;">👤</span>
+                                {% endif %}
+                                <span style="flex: 1; font-size: 0.9rem; font-weight: 500;">{{ member.firstname }} {{ member.lastname[0] if member.lastname }}.</span>
+                                <span style="font-weight: 700; color: #fc4c02; font-size: 0.9rem;">{{ member.best_time_formatted }}</span>
+                                <span style="color: #999; font-size: 0.75rem;">({{ member.attempt_count }}x)</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
+
             {% if type_chart %}
             <section class="section">
                 <h2>📊 Activity Type Distribution</h2>
